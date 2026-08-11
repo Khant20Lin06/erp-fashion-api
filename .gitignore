@@ -1,0 +1,30 @@
+# compiled output
+/dist
+/node_modules
+
+# logs
+*.log
+npm-debug.log*
+
+# environment
+.env
+.env.local
+.env.*.local
+
+# coverage
+/coverage
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea
+
+# swc
+.swc
