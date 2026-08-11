@@ -8,6 +8,8 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { REQUEST_ID_HEADER } from '../middleware/request-id.middleware';
+import { ErrorCode } from '../../core/errors/error-codes';
+import { AppException } from '../../core/errors/app.exception';
 
 interface ErrorResponseBody {
   success: false;
@@ -20,13 +22,13 @@ interface ErrorResponseBody {
 }
 
 const STATUS_CODE_TO_ERROR_CODE: Record<number, string> = {
-  [HttpStatus.BAD_REQUEST]: 'VALIDATION_ERROR',
-  [HttpStatus.UNAUTHORIZED]: 'UNAUTHORIZED',
-  [HttpStatus.FORBIDDEN]: 'FORBIDDEN',
-  [HttpStatus.NOT_FOUND]: 'NOT_FOUND',
-  [HttpStatus.CONFLICT]: 'CONFLICT',
-  [HttpStatus.UNPROCESSABLE_ENTITY]: 'UNPROCESSABLE_ENTITY',
-  [HttpStatus.TOO_MANY_REQUESTS]: 'RATE_LIMITED',
+  [HttpStatus.BAD_REQUEST]: ErrorCode.ValidationError,
+  [HttpStatus.UNAUTHORIZED]: ErrorCode.Unauthorized,
+  [HttpStatus.FORBIDDEN]: ErrorCode.Forbidden,
+  [HttpStatus.NOT_FOUND]: ErrorCode.NotFound,
+  [HttpStatus.CONFLICT]: ErrorCode.Conflict,
+  [HttpStatus.UNPROCESSABLE_ENTITY]: ErrorCode.UnprocessableEntity,
+  [HttpStatus.TOO_MANY_REQUESTS]: ErrorCode.RateLimited,
 };
 
 @Catch()
@@ -42,8 +44,10 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const statusCode = this.resolveStatusCode(exception);
     const message = this.resolveMessage(exception, statusCode);
     const code =
-      STATUS_CODE_TO_ERROR_CODE[statusCode] ??
-      (statusCode >= 500 ? 'INTERNAL_ERROR' : 'ERROR');
+      exception instanceof AppException
+        ? exception.errorCode
+        : (STATUS_CODE_TO_ERROR_CODE[statusCode] ??
+          (statusCode >= 500 ? ErrorCode.InternalError : 'ERROR'));
 
     const body: ErrorResponseBody = {
       success: false,
