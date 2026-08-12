@@ -13,7 +13,7 @@ The full phase specifications live in this same `‌ai/` folder (`PHASE 00.md`,
 
 ## Current Phase
 
-**Phase 09 — Master Data**
+**Phase 10 — Product / Variant / Pricing**
 
 Status: **Completed**
 
@@ -677,6 +677,135 @@ Known/accepted gaps carried forward:
 - `@nestjs/swagger`'s transitive `js-yaml` advisory (unchanged since
   Phase 01, dev-time only).
 
+### Phase 10 — Product / Variant / Pricing
+
+Status: Completed.
+
+- **Boundary**: `Product`, `ProductVariant`, `ProductVariantAttribute`,
+  `ProductVariantBarcode`, `PriceList`, `PriceListItem` — six entities in
+  a new `src/modules/products/` module. PriceList/PriceListItem were
+  explicitly included in this phase (a locked, deliberate expansion of
+  the earlier approved analysis's smaller "VariantPrice only"
+  recommendation) — no promotion/coupon/campaign/tier-pricing engine was
+  built alongside them. Unit/UOM and a Currency entity were explicitly
+  deferred (see below) — no placeholder FKs for either exist anywhere.
+- **Product/Variant model**: `Product` is the commercial/catalog concept;
+  `ProductVariant` is the stockable/sellable unit. **Every Product — even
+  a "SIMPLE" one — is created with exactly one initial `ProductVariant`
+  row, transactionally, in the same call** (`ProductsService.create()`
+  wraps Product + Variant + attribute-row creation in
+  `TransactionService.run()`) — this guarantees Phase 12/13/14 always
+  have exactly one identity (`ProductVariant.id`) to reference, never a
+  fork between "Product is sellable" and "Variant is sellable."
+- **SKU strategy**: four distinct, never-collapsed concepts —
+  `Product.code` (immutable business code), `ProductVariant.sku` (the
+  real sellable identifier, company-unique, SKU never lives on Product),
+  `ProductVariant.combinationKey` (internal, server-computed), and
+  `ProductVariantBarcode.barcode` (separate table entirely). Matches
+  Phase 10 spec §9/§11 and the earlier analysis's Decision D3.
+- **Dynamic attributes**: `ProductVariantAttribute` is a normalized join
+  to the existing Phase 09 `AttributeOption` table (`kind`/`optionId`),
+  not a hard-coded `colorId`/`sizeId` pair — supports
+  COLOR/SIZE/STYLE/MATERIAL and any future kind Phase 09 adds, with zero
+  Phase 09 changes required. `UNIQUE(variant_id, kind)` prevents two
+  options of the same kind on one variant.
+- **Variant combination integrity**: a server-computed, sorted-and-joined
+  `combinationKey` (`src/modules/products/utils/combination-key.ts`)
+  backed by `UNIQUE(product_id, combination_key)` prevents duplicate
+  Black/M-style variants under the same Product — fully relational, no
+  JSON blob.
+- **Barcode**: normalized `ProductVariantBarcode` table (not a column, not
+  comma-separated, not JSON) — one Variant may hold multiple barcodes
+  (verified live). `UNIQUE(company_id, barcode)`.
+- **PriceList/PriceListItem**: company-scoped catalog + effective-dated
+  price rows (`validFrom`/`validTo`, `price` as `DECIMAL(12,2)` — the
+  first real money-column precedent in this codebase). Overlap between
+  active windows for the same `(priceList, variant)` pair is rejected at
+  the service layer (`assertNoOverlap`); rows are closed-and-superseded
+  on a price change, never edited retroactively. No price-priority
+  resolution engine was built — Phase 10 only establishes the data model.
+- **Currency decision**: no `Currency` entity — `PriceList.currency` is a
+  plain regex-validated `CHAR(3)` ISO-4217 string, mirroring
+  `Company.baseCurrency`'s existing Phase 07 pattern exactly. No exchange
+  rates, no conversion logic.
+- **Unit/UOM decision**: fully deferred — no `Unit`/`UOM`/
+  `UnitConversion`/`ProductUnit`/`StockUnit`/`PurchaseUnit` entity or FK
+  anywhere. Proven live: `GET /api/v1/units` → 404.
+- **DataScope/RBAC integration**: reused Phase 06/08/09 mechanisms
+  unmodified — `resolveRequestCompanyId()` (the Phase 09 helper) is
+  called by every new controller with no changes to its own code. 20 new
+  `resource.action` permissions
+  (`products.*`/`product_variants.*`/`barcodes.*`/`price_lists.*`/
+  `price_list_items.*`) added to the existing idempotent seed, granted to
+  SUPER_ADMIN, plus the now-standard `RoleResourceScope` ALL-scope grant
+  per new resource (the Phase 09-discovered gap-closing step, repeated
+  correctly here without rediscovering the gap).
+- **APIs**: `/products`, `/products/:id/variants`, `/product-variants/:id`
+  (+ activate/deactivate/delete), `/product-variants/:id/barcodes`,
+  `/barcodes/:id` (+ activate/deactivate/delete), `/price-lists` (+
+  activate/deactivate/delete), `/price-lists/:id/items` (+ update/
+  deactivate/delete). Full list in
+  `docs/PRODUCT_VARIANT_PRICING_ARCHITECTURE.md`.
+- **Migration**: `1786519479223-CreateProductVariantPricingTables.ts` —
+  six tables. **A real bug was found and fixed during UP verification**:
+  the first attempt sized `product_variants.combination_key` as
+  `VARCHAR(767)`, which combined with `product_id` in the composite
+  unique index exceeded MySQL's 3072-byte max key length for utf8mb4
+  (`ER_TOO_LONG_KEY`). Corrected to `VARCHAR(300)` (ample for the
+  DTO-enforced 8-attribute cap) in both the entity and migration. The
+  failed first attempt also left an orphaned, empty `products` table
+  (MySQL DDL auto-commits per-statement, independent of the migration's
+  own transaction) — manually dropped, with explicit user confirmation
+  before doing so, prior to the corrected migration's successful
+  UP→DOWN→UP verification against live Docker MySQL.
+- **Tests**: 45 new unit tests across 5 spec files (`ProductsService`,
+  `ProductVariantsService`, `BarcodesService`, `PriceListsService`,
+  `PriceListItemsService` — including the overlap-detection algorithm's
+  positive/negative cases and the transactional Product+Variant creation
+  path) + 22 new e2e tests (`test/products.e2e-spec.ts` — auth/permission
+  boundaries, transactional creation, duplicate code/SKU/combination
+  rejection, cross-company rejection on every entity, unknown-field
+  rejection, delete-blocked-while-variants-active, multi-barcode support,
+  full PriceList/PriceListItem CRUD with negative-price/invalid-range/
+  overlap/cross-company rejection, invalid-currency rejection, and the
+  `/units` 404 proof). Total suite after Phase 10: **246 unit tests / 148
+  e2e tests, all passing** (`npm test`, `npm run test:e2e`, both via
+  `--runInBand`).
+- Security review performed and verified live: unauthenticated → 401,
+  authenticated-without-permission → 403, cross-company Product/Variant/
+  PriceList/PriceListItem lookup → 404 (never a leaked existence signal),
+  spoofed cross-company categoryId/brandId/collectionId/productVariantId
+  → 404/400, duplicate code/SKU/barcode/combination/price-list-code → 409,
+  negative price / invalid date range → 400, delete-with-active-variants
+  → 409, unknown/extra fields → 400 (existing global `ValidationPipe`).
+- `docs/PRODUCT_VARIANT_PRICING_ARCHITECTURE.md` documents the full
+  architecture, including the SKU/Barcode/Currency/Unit decisions and the
+  migration bug found during verification.
+- Verified: zero `Customer`/`Supplier`/`Sales`/`Purchase`/`Inventory`/
+  `InventoryLedger`/`Payment`/`Accounting`/`PromotionEngine`/
+  `CouponEngine`/`Unit`/`UOM`/`UnitConversion`/`Currency`(-entity)/
+  `ExchangeRate`/`HR`/`Administration` references anywhere in
+  `src/modules/products` (grepped) — no scope creep in either direction.
+  Zero frontend files touched. No new npm dependencies were added (Phase
+  10 reused Phase 03/04/06/07/09's TypeORM/validation/transaction/RBAC/
+  master-data infrastructure entirely).
+- **Not committed**: per explicit instruction, this phase's work remains
+  uncommitted in the working tree — no `git commit`, no `git push`.
+
+Known/accepted gaps carried forward:
+
+- No dedicated SKU/barcode lookup endpoint yet (e.g.
+  `/product-variants/lookup?sku=`) — deferred until Phase 12 defines its
+  exact POS/lookup contract; the standard list endpoints with a `search`
+  filter cover this need in the interim.
+- No `Currency` entity, no exchange rates, no multi-currency conversion.
+- No `Unit`/`UOM` of any kind.
+- No promotion/coupon/campaign/tier-pricing/customer-group pricing engine
+  — only the base `PriceList`/`PriceListItem` data model exists.
+- No Bruno API collection — consistent with every prior phase.
+- `@nestjs/swagger`'s transitive `js-yaml` advisory (unchanged since
+  Phase 01, dev-time only).
+
 ---
 
 ## Notes for Future Sessions
@@ -733,18 +862,35 @@ Known/accepted gaps carried forward:
   reference each other via a `RESTRICT` FK can fail non-deterministically
   depending on leftover state from a prior interrupted run (found and
   fixed in Phase 09's `master-data.e2e-spec.ts`).
-- Next phase: **Phase 10** (Product/ProductVariant/Pricing). Phase 09's
-  `Category`, `Brand`, `Collection`, and `AttributeOption` entities/
-  services/APIs are ready for Phase 10 to reference without any redesign
-  — see `docs/MASTER_DATA_ARCHITECTURE.md`'s "Future Phase Integration"
-  section for the exact expected FK shape
-  (`Product.categoryId/brandId/collectionId`,
-  `ProductVariant` ↔ `attribute_options`). `DataScopeService.
-  resolveAllowedOrganizationIds()` and `SalesAccountAccessService.
-  getAllowedSalesAccountIds()` remain the two reusable resolution
-  contracts future business modules (Phase 12 Sales especially) should
-  call rather than re-deriving visibility logic — see
-  `docs/USER_EMPLOYEE_ACCOUNT_ARCHITECTURE.md`. The frontend `role`/
+- Sizing a column that participates in a composite unique index against
+  another column requires checking the combined byte length against
+  MySQL's 3072-byte max key length for utf8mb4 (4 bytes/char) — a
+  `VARCHAR(767)` column paired with a `CHAR(36)` in the same unique index
+  overflows this limit (`ER_TOO_LONG_KEY`). Found and fixed in Phase 10's
+  `product_variants.combination_key` (corrected to `VARCHAR(300)`); worth
+  checking proactively for any future wide unique index rather than
+  discovering it at migration time.
+- MySQL DDL statements (`CREATE TABLE`, `ALTER TABLE`, etc.) auto-commit
+  per-statement, independent of the surrounding transaction — if a
+  migration's `up()` fails partway through a multi-table migration, any
+  `CREATE TABLE` that already ran before the failure is **not** rolled
+  back even though TypeORM reports "ROLLBACK". Found in Phase 10: a
+  failed migration attempt left an orphaned, empty `products` table that
+  had to be manually dropped (with explicit confirmation) before retrying
+  the corrected migration. Check for this kind of leftover state before
+  re-running a migration that failed partway through.
+- Next phase: **Phase 11** (Customer/Supplier). Phase 10's `Product`,
+  `ProductVariant`, and `PriceListItem` entities/services/APIs are ready
+  for Phase 11+ to reference without any redesign — see
+  `docs/PRODUCT_VARIANT_PRICING_ARCHITECTURE.md`'s Phase 12/13/14
+  integration-point sections for the exact expected contracts
+  (`ProductVariant.id` as the one stable cross-phase identity; Sales/
+  Purchase must snapshot values at transaction time, never live-reference
+  Product/Price state). `DataScopeService.resolveAllowedOrganizationIds()`
+  and `SalesAccountAccessService.getAllowedSalesAccountIds()` remain the
+  two reusable resolution contracts future business modules (Phase 12
+  Sales especially) should call rather than re-deriving visibility logic
+  — see `docs/USER_EMPLOYEE_ACCOUNT_ARCHITECTURE.md`. The frontend `role`/
   `permissions` response-shape gap (flagged since Phase 05) still has a
   real backend answer via `GET /auth/me/permissions` but frontend wiring
   remains undone (backend-only phases so far). The frontend also has
@@ -754,4 +900,4 @@ Known/accepted gaps carried forward:
   plus zero existing "Sales Account" concept at all — none of these were
   used as a template for Phase 08's schema; reconciling/building the
   frontend is a task for whenever frontend integration begins, not
-  resolved by Phase 07, 08, or 09.
+  resolved by Phase 07, 08, 09, or 10.

@@ -20,6 +20,12 @@ import { Category } from '../modules/master-data/entities/category.entity';
 import { Brand } from '../modules/master-data/entities/brand.entity';
 import { Collection } from '../modules/master-data/entities/collection.entity';
 import { AttributeOption } from '../modules/master-data/entities/attribute-option.entity';
+import { Product } from '../modules/products/entities/product.entity';
+import { ProductVariant } from '../modules/products/entities/product-variant.entity';
+import { ProductVariantAttribute } from '../modules/products/entities/product-variant-attribute.entity';
+import { ProductVariantBarcode } from '../modules/products/entities/product-variant-barcode.entity';
+import { PriceList } from '../modules/products/entities/price-list.entity';
+import { PriceListItem } from '../modules/products/entities/price-list-item.entity';
 
 /**
  * Entities are imported explicitly rather than discovered via a glob.
@@ -51,6 +57,12 @@ const entities = [
   Brand,
   Collection,
   AttributeOption,
+  Product,
+  ProductVariant,
+  ProductVariantAttribute,
+  ProductVariantBarcode,
+  PriceList,
+  PriceListItem,
 ];
 
 export function buildDataSourceOptions(

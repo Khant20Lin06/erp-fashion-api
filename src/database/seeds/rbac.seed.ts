@@ -13,19 +13,21 @@ import { DataScope } from '../../modules/rbac/enums/data-scope.enum';
  * RBAC itself, plus the single SUPER_ADMIN system role holding all of them.
  * RBAC-administration permissions (Phase 06), organization administration
  * permissions (Phase 07: companies/branches/warehouses), user/employee/
- * membership/sales-account administration permissions (Phase 08), and
+ * membership/sales-account administration permissions (Phase 08),
  * master-data administration permissions (Phase 09: categories/brands/
- * collections/attribute_options) are seeded here — business-module
- * permissions (sales.*, inventory.*, ...) are registered by the phases
- * that introduce those modules, not invented here.
+ * collections/attribute_options), and product/variant/pricing
+ * administration permissions (Phase 10: products/product_variants/
+ * barcodes/price_lists/price_list_items) are seeded here —
+ * business-module permissions (sales.*, inventory.*, ...) are registered
+ * by the phases that introduce those modules, not invented here.
  *
  * Phase 09 is also the first phase whose controllers call
  * DataScopeService.resolveScope() on a real request path, which returns
  * null ("no access") when a role has no RoleResourceScope row for the
  * resource at all. Since no seed previously populated that table, this
  * seed also grants SUPER_ADMIN an ALL-scope RoleResourceScope row for each
- * of the four Phase 09 resources — otherwise SUPER_ADMIN itself would be
- * locked out. No other role receives one here.
+ * of the Phase 09 and Phase 10 resources — otherwise SUPER_ADMIN itself
+ * would be locked out. No other role receives one here.
  *
  * Safe to run multiple times: every insert is guarded by a "does this code
  * already exist" check, so re-running never creates duplicates and never
@@ -202,6 +204,75 @@ const PERMISSION_CATALOG: Array<{
     action: 'delete',
     description: 'Delete attribute options',
   },
+  // Phase 10 — Product / Variant / Pricing
+  { resource: 'products', action: 'read', description: 'View products' },
+  { resource: 'products', action: 'create', description: 'Create products' },
+  { resource: 'products', action: 'update', description: 'Update products' },
+  { resource: 'products', action: 'delete', description: 'Delete products' },
+  {
+    resource: 'product_variants',
+    action: 'read',
+    description: 'View product variants',
+  },
+  {
+    resource: 'product_variants',
+    action: 'create',
+    description: 'Create product variants',
+  },
+  {
+    resource: 'product_variants',
+    action: 'update',
+    description: 'Update product variants',
+  },
+  {
+    resource: 'product_variants',
+    action: 'delete',
+    description: 'Delete product variants',
+  },
+  { resource: 'barcodes', action: 'read', description: 'View barcodes' },
+  { resource: 'barcodes', action: 'create', description: 'Create barcodes' },
+  { resource: 'barcodes', action: 'update', description: 'Update barcodes' },
+  { resource: 'barcodes', action: 'delete', description: 'Delete barcodes' },
+  {
+    resource: 'price_lists',
+    action: 'read',
+    description: 'View price lists',
+  },
+  {
+    resource: 'price_lists',
+    action: 'create',
+    description: 'Create price lists',
+  },
+  {
+    resource: 'price_lists',
+    action: 'update',
+    description: 'Update price lists',
+  },
+  {
+    resource: 'price_lists',
+    action: 'delete',
+    description: 'Delete price lists',
+  },
+  {
+    resource: 'price_list_items',
+    action: 'read',
+    description: 'View price list items',
+  },
+  {
+    resource: 'price_list_items',
+    action: 'create',
+    description: 'Create price list items',
+  },
+  {
+    resource: 'price_list_items',
+    action: 'update',
+    description: 'Update price list items',
+  },
+  {
+    resource: 'price_list_items',
+    action: 'delete',
+    description: 'Delete price list items',
+  },
 ];
 
 /**
@@ -216,6 +287,11 @@ const SUPER_ADMIN_ALL_SCOPE_RESOURCES: readonly string[] = [
   'brands',
   'collections',
   'attribute_options',
+  'products',
+  'product_variants',
+  'barcodes',
+  'price_lists',
+  'price_list_items',
 ];
 
 async function seed(): Promise<void> {

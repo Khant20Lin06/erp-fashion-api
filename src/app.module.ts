@@ -19,6 +19,7 @@ import { OrganizationModule } from './modules/organization/organization.module';
 import { EmployeesModule } from './modules/employees/employees.module';
 import { SalesAccountsModule } from './modules/sales-accounts/sales-accounts.module';
 import { MasterDataModule } from './modules/master-data/master-data.module';
+import { ProductsModule } from './modules/products/products.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { MasterDataModule } from './modules/master-data/master-data.module';
     EmployeesModule,
     SalesAccountsModule,
     MasterDataModule,
+    ProductsModule,
   ],
 })
 export class AppModule implements NestModule {
