@@ -3,17 +3,29 @@ import { AppDataSource } from '../data-source';
 import { Role } from '../../modules/rbac/entities/role.entity';
 import { Permission } from '../../modules/rbac/entities/permission.entity';
 import { RolePermission } from '../../modules/rbac/entities/role-permission.entity';
+import { RoleResourceScope } from '../../modules/rbac/entities/role-resource-scope.entity';
 import { RoleStatus } from '../../modules/rbac/entities/role-status.enum';
 import { SystemRoleCode } from '../../modules/rbac/entities/system-role-code';
+import { DataScope } from '../../modules/rbac/enums/data-scope.enum';
 
 /**
  * Idempotent RBAC seed: the base permission catalog required to administer
  * RBAC itself, plus the single SUPER_ADMIN system role holding all of them.
  * RBAC-administration permissions (Phase 06), organization administration
- * permissions (Phase 07: companies/branches/warehouses), and user/employee/
- * membership/sales-account administration permissions (Phase 08) are seeded
- * here — business-module permissions (sales.*, inventory.*, ...) are
- * registered by the phases that introduce those modules, not invented here.
+ * permissions (Phase 07: companies/branches/warehouses), user/employee/
+ * membership/sales-account administration permissions (Phase 08), and
+ * master-data administration permissions (Phase 09: categories/brands/
+ * collections/attribute_options) are seeded here — business-module
+ * permissions (sales.*, inventory.*, ...) are registered by the phases
+ * that introduce those modules, not invented here.
+ *
+ * Phase 09 is also the first phase whose controllers call
+ * DataScopeService.resolveScope() on a real request path, which returns
+ * null ("no access") when a role has no RoleResourceScope row for the
+ * resource at all. Since no seed previously populated that table, this
+ * seed also grants SUPER_ADMIN an ALL-scope RoleResourceScope row for each
+ * of the four Phase 09 resources — otherwise SUPER_ADMIN itself would be
+ * locked out. No other role receives one here.
  *
  * Safe to run multiple times: every insert is guarded by a "does this code
  * already exist" check, so re-running never creates duplicates and never
@@ -133,6 +145,77 @@ const PERMISSION_CATALOG: Array<{
     action: 'unassign',
     description: "Remove a user's sales account assignment",
   },
+  // Phase 09 — Master Data (Category, Brand, Collection, AttributeOption)
+  { resource: 'categories', action: 'read', description: 'View categories' },
+  {
+    resource: 'categories',
+    action: 'create',
+    description: 'Create categories',
+  },
+  {
+    resource: 'categories',
+    action: 'update',
+    description: 'Update categories',
+  },
+  {
+    resource: 'categories',
+    action: 'delete',
+    description: 'Delete categories',
+  },
+  { resource: 'brands', action: 'read', description: 'View brands' },
+  { resource: 'brands', action: 'create', description: 'Create brands' },
+  { resource: 'brands', action: 'update', description: 'Update brands' },
+  { resource: 'brands', action: 'delete', description: 'Delete brands' },
+  { resource: 'collections', action: 'read', description: 'View collections' },
+  {
+    resource: 'collections',
+    action: 'create',
+    description: 'Create collections',
+  },
+  {
+    resource: 'collections',
+    action: 'update',
+    description: 'Update collections',
+  },
+  {
+    resource: 'collections',
+    action: 'delete',
+    description: 'Delete collections',
+  },
+  {
+    resource: 'attribute_options',
+    action: 'read',
+    description: 'View attribute options (color/size/style/material)',
+  },
+  {
+    resource: 'attribute_options',
+    action: 'create',
+    description: 'Create attribute options',
+  },
+  {
+    resource: 'attribute_options',
+    action: 'update',
+    description: 'Update attribute options',
+  },
+  {
+    resource: 'attribute_options',
+    action: 'delete',
+    description: 'Delete attribute options',
+  },
+];
+
+/**
+ * Resources that gate access through DataScopeService.resolveScope() (Phase
+ * 09 §12 — reusing the existing Phase 06/08 scope-resolution mechanism
+ * rather than inventing another one). SUPER_ADMIN is granted ALL scope for
+ * each so it can operate without an explicit RoleResourceScope row being
+ * missing entirely; no other role receives one from this seed.
+ */
+const SUPER_ADMIN_ALL_SCOPE_RESOURCES: readonly string[] = [
+  'categories',
+  'brands',
+  'collections',
+  'attribute_options',
 ];
 
 async function seed(): Promise<void> {
@@ -141,6 +224,8 @@ async function seed(): Promise<void> {
   const permissionRepository = AppDataSource.getRepository(Permission);
   const roleRepository = AppDataSource.getRepository(Role);
   const rolePermissionRepository = AppDataSource.getRepository(RolePermission);
+  const roleResourceScopeRepository =
+    AppDataSource.getRepository(RoleResourceScope);
 
   const permissions: Permission[] = [];
 
@@ -191,6 +276,24 @@ async function seed(): Promise<void> {
         }),
       );
       console.log(`Granted ${permission.code} to SUPER_ADMIN`);
+    }
+  }
+
+  for (const resource of SUPER_ADMIN_ALL_SCOPE_RESOURCES) {
+    const existing = await roleResourceScopeRepository.findOne({
+      where: { roleId: superAdminRole.id, resource },
+    });
+
+    if (!existing) {
+      await roleResourceScopeRepository.save(
+        roleResourceScopeRepository.create({
+          roleId: superAdminRole.id,
+          resource,
+          scope: DataScope.All,
+          scopeValue: null,
+        }),
+      );
+      console.log(`Granted ALL scope for ${resource} to SUPER_ADMIN`);
     }
   }
 

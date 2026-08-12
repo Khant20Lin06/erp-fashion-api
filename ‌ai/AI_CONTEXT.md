@@ -13,7 +13,7 @@ The full phase specifications live in this same `‌ai/` folder (`PHASE 00.md`,
 
 ## Current Phase
 
-**Phase 08 — User / Employee / Account Management**
+**Phase 09 — Master Data**
 
 Status: **Completed**
 
@@ -545,6 +545,138 @@ Known/accepted gaps carried forward:
 - `@nestjs/swagger`'s transitive `js-yaml` advisory (unchanged since
   Phase 01, dev-time only).
 
+### Phase 09 — Master Data
+
+Status: Completed.
+
+- **Boundary**: exactly four entities — `Category`, `Brand`, `Collection`,
+  `AttributeOption` — per the approved analysis's frontend evidence
+  inventory. `Currency`, `PaymentTerm`, `PaymentMethod`, `PriceType`,
+  `DiscountType`, `Country`, `Unit`, `SizeGroup`, and standalone `Tax` were
+  explicitly not built (unsupported by current frontend/backend evidence).
+- **Category** (`src/modules/master-data/entities/category.entity.ts`):
+  the only self-referencing entity in this phase (`parentId → categories`,
+  `ON DELETE RESTRICT`). Gained a **backend-only `code` field** (stable,
+  unique, immutable) even though the frontend doesn't expose one yet — per
+  the locked decision not to blindly copy the frontend's current shape.
+  `UNIQUE(company_id, code)`. Cycle protection (`assertNoCycle`) walks the
+  ancestor chain of the proposed new parent, bounded by the company's total
+  category count — verified by a real API-driven A→B→C chain reparenting
+  attempt that would create A→B→C→A, correctly rejected with 400.
+  Self-parent and cross-company parent are also rejected (400); deleting a
+  category with existing children is rejected (409, no orphaning).
+- **Brand** / **Collection** (`src/modules/master-data/entities/`): flat
+  entities, same company-scoped CRUD/status/soft-delete/uniqueness
+  pattern. `Brand` deliberately omits `logoUrl` (presentation metadata).
+  `Collection.season` is an embedded MySQL enum column
+  (`SPRING_SUMMER|AUTUMN_WINTER|ALL_SEASON`), **not** a standalone `Season`
+  entity/table/repository — no Season admin page or API exists anywhere in
+  the frontend. Proven live: `GET /api/v1/seasons` returns 404.
+- **AttributeOption**: **one unified table** discriminated by a `kind`
+  enum (`COLOR|SIZE|STYLE|MATERIAL`), not four separate colors/sizes/
+  styles/materials tables — matching the frontend's own
+  `AttributeOption.kind` shape exactly. `UNIQUE(company_id, kind, code)` —
+  `SIZE+"M"` and `COLOR+"M"` never collide (verified by test). `swatch`
+  only accepted when `kind = COLOR`, rejected server-side otherwise (both
+  on create and update). No `/colors` or `/sizes` routes exist — proven
+  live, both return 404.
+- **Scope/DataScope integration — the seed gap this phase found and
+  fixed**: Phase 09's controllers are the **first** in the codebase to
+  actually call `DataScopeService.resolveScope()` /
+  `resolveAllowedOrganizationIds()` on a real request path (Phases 07/08
+  authorize purely via `PermissionGuard` and never resolved a per-resource
+  scope at runtime). This surfaced a real gap — no seed had ever populated
+  `role_resource_scopes`, so `resolveScope()` correctly returned `null`
+  ("no access") for every role, including SUPER_ADMIN, which would have
+  locked SUPER_ADMIN itself out of all four new resources. Fixed by
+  extending `rbac.seed.ts` to also grant SUPER_ADMIN an `ALL`-scope
+  `RoleResourceScope` row for each of the four Phase 09 resources — the
+  minimum needed for the seeded system role to function; no other role
+  receives one from this seed; verified idempotent on re-run. No new
+  visibility service was created (`CategoryScopeService`,
+  `OrganizationScopeService`, or any second DataScope system were all
+  explicitly avoided) — instead, a single stateless helper function,
+  `resolveRequestCompanyId()`
+  (`src/modules/master-data/utils/resolve-request-company-id.ts`), wraps
+  the existing Phase 06/08 methods and is reused identically by all four
+  controllers. Client-supplied `companyId` is never trusted directly — it
+  must appear in the server-resolved allowed-company list; auto-selected
+  when exactly one company is allowed, required when ambiguous (ALL scope
+  or multiple companies).
+- **Master Data status**: `ACTIVE`/`INACTIVE` only on all four entities,
+  consistent with the existing two-value status pattern.
+- **RBAC integration (reused, not duplicated)**: 16 new permissions
+  (`categories.*`, `brands.*`, `collections.*`, `attribute_options.*` —
+  read/create/update/delete each) added to the existing idempotent seed,
+  granted to SUPER_ADMIN only. Zero hard-coded role-name checks anywhere
+  in the new module (grep-verified).
+- **APIs**: `/categories`, `/brands`, `/collections`, `/attribute-options`
+  — each with list (paginated, filterable)/detail/create/update/
+  activate/deactivate/delete (soft). Full list in
+  `docs/MASTER_DATA_ARCHITECTURE.md`.
+- **Migration**: `1786503728069-CreateMasterDataTables.ts` — creates
+  `categories`, `brands`, `collections`, `attribute_options`. Verified
+  UP→DOWN→UP against real Dockerized MySQL **twice**: once during initial
+  implementation, and again after the `rbac.seed.ts` fix, to confirm the
+  seed change didn't affect migration correctness (`RoleResourceScope`
+  rows live in a separate table untouched by this migration — confirmed
+  intact across the revert/re-apply cycle).
+- **Tests**: 30 new unit tests (`CategoriesService` incl. the real
+  A→B→C→A cycle-rejection mock sequence, `BrandsService`,
+  `CollectionsService`, `AttributeOptionsService`) + 26 new e2e tests
+  (`test/master-data.e2e-spec.ts` — auth boundary, permission boundary,
+  full CRUD, the Category hierarchy/cycle-protection suite built on real
+  API-driven chains, the Collection `/seasons`-404 proof, the
+  AttributeOption `/colors`/`/sizes`-404 proofs, unknown-field rejection).
+  Total suite after Phase 09: **194 unit tests / 126 e2e tests, all
+  passing** (`npm test`, `npm run test:e2e`, both via `--runInBand`).
+- **E2E cleanup bug found and fixed**: the new suite's `beforeAll`/
+  `afterAll` did a bulk `DELETE FROM categories WHERE code LIKE
+  'MD-E2E-%'` without first clearing `parent_id` — when a leftover
+  self-referencing parent/child pair existed (e.g. from a previously
+  interrupted run), MySQL's `FK_cat_parent` `RESTRICT` constraint rejected
+  the bulk delete, which in turn made every subsequent test in the suite
+  fail against an increasingly dirty database. Fixed by adding `UPDATE
+  categories SET parent_id = NULL WHERE code LIKE '...'` immediately
+  before the `DELETE`, in both `beforeAll` and `afterAll` — verified
+  stable across repeated runs afterward, including a run starting from a
+  deliberately dirtied database.
+- Security review performed and verified live through the running Docker
+  container: unauthenticated → 401, authenticated-without-permission (and
+  company-outside-scope) → 403, cross-company category/brand/collection/
+  attribute-option lookup → 404 (never 403, never a leaked existence
+  signal), spoofed cross-company `parentId` → 400, self-parent → 400,
+  circular hierarchy → 400, duplicate code/kind+code → 409,
+  delete-with-children → 409, unknown/extra fields (e.g. `logoUrl` on
+  Brand) → 400 (existing global `ValidationPipe`).
+- `docs/MASTER_DATA_ARCHITECTURE.md` documents the full architecture,
+  including the Season/AttributeOption locked decisions and the
+  `resolveRequestCompanyId`/`RoleResourceScope` seed-gap story in detail.
+- Verified: zero `Currency`/`PaymentTerm`/`PaymentMethod`/`PriceType`/
+  `DiscountType`/`Unit`/`SizeGroup`/standalone-`Tax`/standalone-`Season`
+  references, and zero Phase 10+ terms (`Product`/`ProductVariant`/`SKU`/
+  `Barcode`/`PriceList`/`Customer`/`Supplier`) anywhere in
+  `src/modules/master-data` (grepped) — no scope creep in either
+  direction. Zero frontend files touched. No new npm dependencies were
+  added (Phase 09 reused Phase 03/04/06/07/08's TypeORM/validation/
+  transaction/RBAC/organization infrastructure entirely).
+- **Not committed**: per explicit instruction, this phase's work remains
+  uncommitted in the working tree — no `git commit`, no `git push`.
+
+Known/accepted gaps carried forward:
+
+- No cross-entity referential validation yet (e.g. nothing prevents
+  deleting a Brand a future Product might reference) — there is no
+  Product entity yet for such a reference to exist. Intended Phase 10
+  integration seam, not a gap.
+- `RoleResourceScope` grants from this phase's seed cover SUPER_ADMIN
+  only. Any other role that should manage master data needs its own
+  `RoleResourceScope` row created through the existing Phase 06 RBAC
+  administration surface — no new provisioning mechanism was added.
+- No Bruno API collection — consistent with every prior phase.
+- `@nestjs/swagger`'s transitive `js-yaml` advisory (unchanged since
+  Phase 01, dev-time only).
+
 ---
 
 ## Notes for Future Sessions
@@ -586,14 +718,32 @@ Known/accepted gaps carried forward:
   suites depend on shared live RBAC state (any suite touching
   `role_permissions`/`user_roles` globally), or intermittent 403s from
   cross-suite races will result.
-- Next phase: **Phase 09 — Master Data**. Phase 08's `User`, `Employee`,
-  `UserCompany`/`UserBranch`/`UserWarehouse`, `SalesAccount`, and
-  `SalesAccountAssignment` entities and services/APIs are ready for Phase
-  09 to reference without any redesign. `DataScopeService.
+- Any controller that needs `DataScopeService.resolveScope()` to actually
+  grant access (not just return `null`/"no access") must ensure a
+  `RoleResourceScope` row exists for the relevant role+resource — Phase 09
+  found that no seed populated this table before its own controllers
+  became the first real callers. `rbac.seed.ts` now grants SUPER_ADMIN an
+  `ALL`-scope row per Phase 09 resource; any new module wiring a role
+  other than SUPER_ADMIN into a `resolveScope()`-gated route must add its
+  own `RoleResourceScope` seeding or provisioning — it will not happen
+  automatically.
+- When an e2e suite's `beforeAll`/`afterAll` bulk-deletes rows from a
+  self-referencing table (e.g. `categories.parent_id`), null out the
+  self-referencing FK column first — a bulk `DELETE` on rows that
+  reference each other via a `RESTRICT` FK can fail non-deterministically
+  depending on leftover state from a prior interrupted run (found and
+  fixed in Phase 09's `master-data.e2e-spec.ts`).
+- Next phase: **Phase 10** (Product/ProductVariant/Pricing). Phase 09's
+  `Category`, `Brand`, `Collection`, and `AttributeOption` entities/
+  services/APIs are ready for Phase 10 to reference without any redesign
+  — see `docs/MASTER_DATA_ARCHITECTURE.md`'s "Future Phase Integration"
+  section for the exact expected FK shape
+  (`Product.categoryId/brandId/collectionId`,
+  `ProductVariant` ↔ `attribute_options`). `DataScopeService.
   resolveAllowedOrganizationIds()` and `SalesAccountAccessService.
-  getAllowedSalesAccountIds()` are the two reusable resolution contracts
-  future business modules (Phase 12 Sales especially) should call rather
-  than re-deriving visibility logic — see
+  getAllowedSalesAccountIds()` remain the two reusable resolution
+  contracts future business modules (Phase 12 Sales especially) should
+  call rather than re-deriving visibility logic — see
   `docs/USER_EMPLOYEE_ACCOUNT_ARCHITECTURE.md`. The frontend `role`/
   `permissions` response-shape gap (flagged since Phase 05) still has a
   real backend answer via `GET /auth/me/permissions` but frontend wiring
@@ -604,4 +754,4 @@ Known/accepted gaps carried forward:
   plus zero existing "Sales Account" concept at all — none of these were
   used as a template for Phase 08's schema; reconciling/building the
   frontend is a task for whenever frontend integration begins, not
-  resolved by Phase 07 or Phase 08.
+  resolved by Phase 07, 08, or 09.

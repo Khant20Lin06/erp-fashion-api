@@ -16,6 +16,10 @@ import { UserWarehouse } from '../modules/organization/entities/user-warehouse.e
 import { Employee } from '../modules/employees/entities/employee.entity';
 import { SalesAccount } from '../modules/sales-accounts/entities/sales-account.entity';
 import { SalesAccountAssignment } from '../modules/sales-accounts/entities/sales-account-assignment.entity';
+import { Category } from '../modules/master-data/entities/category.entity';
+import { Brand } from '../modules/master-data/entities/brand.entity';
+import { Collection } from '../modules/master-data/entities/collection.entity';
+import { AttributeOption } from '../modules/master-data/entities/attribute-option.entity';
 
 /**
  * Entities are imported explicitly rather than discovered via a glob.
@@ -43,6 +47,10 @@ const entities = [
   Employee,
   SalesAccount,
   SalesAccountAssignment,
+  Category,
+  Brand,
+  Collection,
+  AttributeOption,
 ];
 
 export function buildDataSourceOptions(
