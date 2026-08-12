@@ -13,7 +13,7 @@ The full phase specifications live in this same `‌ai/` folder (`PHASE 00.md`,
 
 ## Current Phase
 
-**Phase 06 — Dynamic RBAC + Data Visibility**
+**Phase 07 — Organization / Company / Branch / Warehouse**
 
 Status: **Completed**
 
@@ -285,6 +285,134 @@ Known/accepted risks and gaps carried forward:
 - `@nestjs/swagger`'s transitive `js-yaml` advisory (unchanged since
   Phase 01, dev-time only).
 
+### Phase 07 — Organization / Company / Branch / Warehouse
+
+Status: Completed.
+
+- **Entities** (`src/modules/organization/entities/`): `Company`, `Branch`,
+  `Warehouse` — three normalized relational tables, root hierarchy
+  `Company ──< Branch ──< Warehouse`. **No standalone `Organization`
+  entity was created** — the spec's own diagrams and explicit statements
+  (§64, §119) place Company as the root; "Organization" remained a
+  conceptual label only, never a fourth table. Migration
+  `CreateOrganizationTables` applied, reverted, and re-applied against
+  real Dockerized MySQL to verify both `up()` and `down()`; resulting
+  schema (FKs, `ON DELETE RESTRICT`, unique/composite indexes) inspected
+  directly via `SHOW CREATE TABLE`.
+- **Company**: root entity — `code` (globally unique, immutable), `name`,
+  `status` (`ACTIVE`/`INACTIVE`), `baseCurrency` (3-letter ISO),
+  `timezone` (IANA), `country`, `phone`, `email`, `address`. `legalName`
+  and fiscal/tax fields were deliberately **not** implemented — optional
+  per spec, no concrete requirement, kept minimal per instruction.
+- **Branch**: belongs to exactly one Company (`companyId`, immutable after
+  creation). `code` unique **per company** (`UNIQUE(company_id, code)`,
+  not globally) — verified by a dedicated e2e test creating the same code
+  under two different companies successfully.
+- **Warehouse**: belongs to exactly one Branch (`branchId`, immutable) and
+  denormalized to exactly one Company (`companyId`, immutable). `code`
+  unique per company. `type` extensible enum (`MAIN, STORE, DISTRIBUTION,
+  TRANSIT, RETURN, VIRTUAL, OTHER`), default `MAIN`.
+- **Critical integrity rule enforced**: `warehouse.companyId` must equal
+  its parent branch's `companyId` — checked in `WarehousesService.create()`
+  before insert, never relied on as DB-only (a composite FK cannot express
+  "these two FK targets must agree"). Covered by a dedicated e2e test
+  reproducing the exact Company A + Company B's Branch cross-company
+  scenario from the spec.
+- **Hierarchy validation on create**: Branch requires an existing, active
+  parent Company; Warehouse requires an existing, active parent Branch
+  whose `companyId` matches the submitted `companyId`. Client-submitted
+  `companyId`/`branchId` are used only as lookup keys, never trusted.
+- **Lifecycle**: `ACTIVE`/`INACTIVE` on all three. Deactivating a parent
+  does not cascade to children (blocks *new* child creation only, per
+  spec §70–72). Deletion is soft-delete only and explicitly blocked with
+  409 while active children exist (Company blocked by existing Branches,
+  Branch blocked by existing Warehouses) — the FK `ON DELETE RESTRICT` on
+  every parent-child relationship is the hard backstop behind these
+  explicit service-level checks.
+- **RBAC integration (reused, not duplicated)**: 12 new `resource.action`
+  permissions registered into the existing Phase 06 catalog
+  (`companies.read/create/update/delete`, `branches.*`, `warehouses.*`),
+  seeded idempotently via the same `rbac.seed.ts` (verified: re-running
+  produces zero output, no duplicates). All endpoints protected by the
+  existing `JwtAuthGuard` + `PermissionGuard` + `@RequirePermission()` —
+  zero new authorization concepts, zero new scope enum values, zero
+  hard-coded role checks (grepped and confirmed). `RbacModule` now also
+  exports `PermissionGuard` (previously provider-only) so the separate
+  `OrganizationModule` can inject it via DI.
+- **Data Scope integration — deliberately partial**: Phase 06's
+  `DataScope` enum already had `COMPANY`/`BRANCH`/`WAREHOUSE`/
+  `ORGANIZATION` values and `RoleResourceScope.scopeValue`. Phase 07 gives
+  those values real entities to eventually resolve against, but does
+  **not** extend `DataScopeService` with a scope→allowed-IDs resolution
+  method — that resolution's only meaningful input is organization
+  *membership* (`UserCompany`/`UserBranch`/`UserWarehouse`), which is
+  explicitly Phase 08's responsibility. Building it now would mean
+  resolving against either nothing (meaningless) or an invented temporary
+  membership model (explicitly disallowed by this phase's instructions).
+  Documented as the primary Phase 08 integration point in
+  `docs/ORGANIZATION_ARCHITECTURE.md`.
+- **APIs**: `/companies`, `/branches` (filterable by `companyId`),
+  `/warehouses` (filterable by `companyId`/`branchId`/`status`) — each
+  with GET (list+detail), POST, PATCH, activate/deactivate,
+  DELETE (soft, blocked while children exist). Full list in
+  `docs/ORGANIZATION_ARCHITECTURE.md`.
+- **Tests**: 26 new unit tests (`CompaniesService`, `BranchesService`,
+  `WarehousesService` — including the exact Company A/Branch-of-Company-B
+  cross-company rejection scenario) + 25 new e2e tests
+  (`test/organization.e2e-spec.ts` — auth boundary, permission boundary,
+  full CRUD, hierarchy validation, the critical cross-company integrity
+  rule, uniqueness scoping in both directions, orphan-prevention on
+  delete, unknown-field rejection). Total suite after Phase 07: **107
+  unit tests / 74 e2e tests, all passing** (run via `npm test` and
+  `npm run test:e2e` respectively).
+- **Test infrastructure fix required**: adding a second e2e suite that
+  depends on the live Super Admin role's permission grants
+  (`organization.e2e-spec.ts`, alongside the pre-existing
+  `rbac.e2e-spec.ts`) surfaced a cross-suite race under Jest's default
+  parallel workers — both suites mutate/query the same global
+  `role_permissions` rows concurrently against the one shared live
+  database, causing intermittent 403s. Fixed by adding `--runInBand` to
+  the `test:e2e` npm script (`package.json`) — verified stable across
+  repeated full-suite runs afterward (`npm run test:e2e` → 5 suites / 74
+  tests passing). This was not a bug in either suite individually; both
+  pass standalone. Pre-existing suites (`app`, `auth`, `validation`) were
+  unaffected in isolation — confirmed by running them without the new
+  suite present before applying the fix.
+- Security review performed and verified live through the running Docker
+  container: unauthenticated → 401, authenticated-without-permission →
+  403, cross-company Branch-under-wrong-Company/Warehouse-under-wrong-
+  Branch → 400 (rejected before insert), duplicate code within the same
+  parent → 409, same code across different parents → 201/201 (allowed,
+  per scoped-uniqueness design), deletion blocked while active children
+  exist → 409, unknown/extra fields → 400 (existing global
+  `ValidationPipe`).
+- `docs/ORGANIZATION_ARCHITECTURE.md` documents the full architecture,
+  including the explicit "what Phase 07 does and does not do" boundary
+  around Data Scope resolution.
+- Verified: zero `Employee`/`SalesAccount`/`UserCompany`/`UserBranch`/
+  `UserWarehouse`/`Sales`/`Inventory`/`Accounting` references anywhere in
+  `src/modules/organization` (grepped) — no Phase 08+ scope crept into
+  this phase. No new npm dependencies were added (Phase 07 reused Phase
+  03/04/06's TypeORM/validation/transaction/RBAC infrastructure
+  entirely). Zero frontend files were touched.
+
+Known/accepted gaps carried forward:
+
+- No `DataScopeService` scope→ID resolution yet — see "Data Scope
+  integration" above. Primary Phase 08 integration point.
+- No `Company.defaultBranchId` / `Branch.defaultWarehouseId` — spec frames
+  both as conditional ("if required"); no concrete requirement surfaced.
+  Can be added later without disrupting the current schema.
+- No membership tables (`UserCompany`/`UserBranch`/`UserWarehouse`) or
+  `OrganizationContext`/`X-Company-Id` request-context abstraction —
+  entirely Phase 08's responsibility per this phase's explicit boundary;
+  building any of it now would mean inventing a temporary model, which
+  was explicitly disallowed.
+- No Bruno API collection — consistent with Phase 06's own precedent (no
+  prior phase established Bruno tooling in this repository).
+- `@nestjs/swagger`'s transitive `js-yaml` advisory (unchanged since
+  Phase 01, dev-time only).
+
 ---
 
 ## Notes for Future Sessions
@@ -320,11 +448,25 @@ Known/accepted risks and gaps carried forward:
 - The standard typecheck command is `npx tsc --noEmit -p tsconfig.json`,
   not just `npm run build` — `nest build` excludes `*.spec.ts` files from
   compilation and will not catch type errors in test files.
-- Next phase: **Phase 07 — Organization / Company / Branch / Warehouse**.
-  Phase 06's `RoleResourceScope.scopeValue` and the `COMPANY`/`BRANCH`/
-  `WAREHOUSE`/`ORGANIZATION` scope enum values are ready for Phase 07 to
-  connect to real entities. The frontend `role`/`permissions`
-  response-shape gap (flagged since Phase 05) now has a real backend
-  answer via `GET /auth/me/permissions`, though wiring the frontend to
-  consume it was not done in Phase 06 (backend-only phase; frontend
-  integration was not required by the approved architecture decisions).
+- The standard e2e test command is now `npm run test:e2e` (which runs
+  `jest --runInBand` under the hood as of Phase 07) — do not run the raw
+  `jest --config ./test/jest-e2e.json` without `--runInBand` when multiple
+  suites depend on shared live RBAC state (any suite touching
+  `role_permissions`/`user_roles` globally), or intermittent 403s from
+  cross-suite races will result.
+- Next phase: **Phase 08 — Employee / User Administration / Sales
+  Account**. Phase 07's `Company`/`Branch`/`Warehouse` entities and their
+  services/APIs are ready for Phase 08 to build `UserCompany`/
+  `UserBranch`/`UserWarehouse` membership tables against, without any
+  redesign of the organization schema. `DataScopeService`'s scope→ID
+  resolution (COMPANY/BRANCH/WAREHOUSE → real allowed-ID lists) is the
+  key piece Phase 08 unblocks — see `docs/ORGANIZATION_ARCHITECTURE.md`'s
+  "Data Scope Integration" section for exactly what is and is not built
+  yet. The frontend `role`/`permissions` response-shape gap (flagged since
+  Phase 05) still has a real backend answer via `GET /auth/me/permissions`
+  but frontend wiring remains undone (backend-only phases so far). The
+  frontend also has three mutually-incompatible Company/Branch/Warehouse
+  models (`features/admin`, `features/inventory`, `features/hr`) that
+  were deliberately not used as a template for this phase's schema —
+  reconciling them is a frontend task for whenever frontend integration
+  begins, not resolved by Phase 07.

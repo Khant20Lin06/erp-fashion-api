@@ -42,6 +42,6 @@ import { AuthModule } from '../auth/auth.module';
     SuperAdminInvariantService,
     PermissionGuard,
   ],
-  exports: [AuthorizationService, DataScopeService],
+  exports: [AuthorizationService, DataScopeService, PermissionGuard],
 })
 export class RbacModule {}

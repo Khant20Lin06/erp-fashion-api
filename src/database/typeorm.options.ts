@@ -7,6 +7,9 @@ import { Permission } from '../modules/rbac/entities/permission.entity';
 import { RolePermission } from '../modules/rbac/entities/role-permission.entity';
 import { UserRole } from '../modules/rbac/entities/user-role.entity';
 import { RoleResourceScope } from '../modules/rbac/entities/role-resource-scope.entity';
+import { Company } from '../modules/organization/entities/company.entity';
+import { Branch } from '../modules/organization/entities/branch.entity';
+import { Warehouse } from '../modules/organization/entities/warehouse.entity';
 
 /**
  * Entities are imported explicitly rather than discovered via a glob.
@@ -25,6 +28,9 @@ const entities = [
   RolePermission,
   UserRole,
   RoleResourceScope,
+  Company,
+  Branch,
+  Warehouse,
 ];
 
 export function buildDataSourceOptions(

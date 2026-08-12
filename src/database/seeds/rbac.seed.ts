@@ -9,9 +9,10 @@ import { SystemRoleCode } from '../../modules/rbac/entities/system-role-code';
 /**
  * Idempotent RBAC seed: the base permission catalog required to administer
  * RBAC itself, plus the single SUPER_ADMIN system role holding all of them.
- * Only the RBAC-administration permissions are seeded here (Phase 06 scope)
- * — business-module permissions (sales.*, inventory.*, ...) are registered
- * by the phases that introduce those modules, not invented here.
+ * Only RBAC-administration permissions (Phase 06) and organization
+ * administration permissions (Phase 07: companies/branches/warehouses) are
+ * seeded here — business-module permissions (sales.*, inventory.*, ...) are
+ * registered by the phases that introduce those modules, not invented here.
  *
  * Safe to run multiple times: every insert is guarded by a "does this code
  * already exist" check, so re-running never creates duplicates and never
@@ -49,6 +50,31 @@ const PERMISSION_CATALOG: Array<{
     resource: 'user_roles',
     action: 'remove',
     description: 'Remove roles from users',
+  },
+  // Phase 07 — Organization / Company / Branch / Warehouse
+  { resource: 'companies', action: 'read', description: 'View companies' },
+  { resource: 'companies', action: 'create', description: 'Create companies' },
+  { resource: 'companies', action: 'update', description: 'Update companies' },
+  { resource: 'companies', action: 'delete', description: 'Delete companies' },
+  { resource: 'branches', action: 'read', description: 'View branches' },
+  { resource: 'branches', action: 'create', description: 'Create branches' },
+  { resource: 'branches', action: 'update', description: 'Update branches' },
+  { resource: 'branches', action: 'delete', description: 'Delete branches' },
+  { resource: 'warehouses', action: 'read', description: 'View warehouses' },
+  {
+    resource: 'warehouses',
+    action: 'create',
+    description: 'Create warehouses',
+  },
+  {
+    resource: 'warehouses',
+    action: 'update',
+    description: 'Update warehouses',
+  },
+  {
+    resource: 'warehouses',
+    action: 'delete',
+    description: 'Delete warehouses',
   },
 ];
 
