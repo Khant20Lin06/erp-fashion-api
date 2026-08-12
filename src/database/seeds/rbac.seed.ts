@@ -9,9 +9,10 @@ import { SystemRoleCode } from '../../modules/rbac/entities/system-role-code';
 /**
  * Idempotent RBAC seed: the base permission catalog required to administer
  * RBAC itself, plus the single SUPER_ADMIN system role holding all of them.
- * Only RBAC-administration permissions (Phase 06) and organization
- * administration permissions (Phase 07: companies/branches/warehouses) are
- * seeded here — business-module permissions (sales.*, inventory.*, ...) are
+ * RBAC-administration permissions (Phase 06), organization administration
+ * permissions (Phase 07: companies/branches/warehouses), and user/employee/
+ * membership/sales-account administration permissions (Phase 08) are seeded
+ * here — business-module permissions (sales.*, inventory.*, ...) are
  * registered by the phases that introduce those modules, not invented here.
  *
  * Safe to run multiple times: every insert is guarded by a "does this code
@@ -75,6 +76,62 @@ const PERMISSION_CATALOG: Array<{
     resource: 'warehouses',
     action: 'delete',
     description: 'Delete warehouses',
+  },
+  // Phase 08 — User / Employee / Account Management
+  // users.read/create/update/delete already seeded above (Phase 06) — reused
+  // as-is, only the new action verbs are added here.
+  { resource: 'users', action: 'activate', description: 'Activate users' },
+  { resource: 'users', action: 'deactivate', description: 'Deactivate users' },
+  { resource: 'users', action: 'lock', description: 'Lock users' },
+  { resource: 'users', action: 'unlock', description: 'Unlock users' },
+  { resource: 'employees', action: 'read', description: 'View employees' },
+  { resource: 'employees', action: 'create', description: 'Create employees' },
+  { resource: 'employees', action: 'update', description: 'Update employees' },
+  { resource: 'employees', action: 'delete', description: 'Delete employees' },
+  {
+    resource: 'user_organizations',
+    action: 'read',
+    description: "View a user's organization membership",
+  },
+  {
+    resource: 'user_organizations',
+    action: 'assign',
+    description: 'Assign a user to a company/branch/warehouse',
+  },
+  {
+    resource: 'user_organizations',
+    action: 'remove',
+    description: "Remove a user's company/branch/warehouse membership",
+  },
+  {
+    resource: 'sales_accounts',
+    action: 'read',
+    description: 'View sales accounts',
+  },
+  {
+    resource: 'sales_accounts',
+    action: 'create',
+    description: 'Create sales accounts',
+  },
+  {
+    resource: 'sales_accounts',
+    action: 'update',
+    description: 'Update sales accounts',
+  },
+  {
+    resource: 'sales_accounts',
+    action: 'delete',
+    description: 'Delete sales accounts',
+  },
+  {
+    resource: 'sales_accounts',
+    action: 'assign',
+    description: 'Assign a user to a sales account',
+  },
+  {
+    resource: 'sales_accounts',
+    action: 'unassign',
+    description: "Remove a user's sales account assignment",
   },
 ];
 

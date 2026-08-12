@@ -10,6 +10,12 @@ import { RoleResourceScope } from '../modules/rbac/entities/role-resource-scope.
 import { Company } from '../modules/organization/entities/company.entity';
 import { Branch } from '../modules/organization/entities/branch.entity';
 import { Warehouse } from '../modules/organization/entities/warehouse.entity';
+import { UserCompany } from '../modules/organization/entities/user-company.entity';
+import { UserBranch } from '../modules/organization/entities/user-branch.entity';
+import { UserWarehouse } from '../modules/organization/entities/user-warehouse.entity';
+import { Employee } from '../modules/employees/entities/employee.entity';
+import { SalesAccount } from '../modules/sales-accounts/entities/sales-account.entity';
+import { SalesAccountAssignment } from '../modules/sales-accounts/entities/sales-account-assignment.entity';
 
 /**
  * Entities are imported explicitly rather than discovered via a glob.
@@ -31,6 +37,12 @@ const entities = [
   Company,
   Branch,
   Warehouse,
+  UserCompany,
+  UserBranch,
+  UserWarehouse,
+  Employee,
+  SalesAccount,
+  SalesAccountAssignment,
 ];
 
 export function buildDataSourceOptions(

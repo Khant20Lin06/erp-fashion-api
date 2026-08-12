@@ -4,10 +4,19 @@ import { UserRole } from '../entities/user-role.entity';
 import { Role } from '../entities/role.entity';
 import { RoleResourceScope } from '../entities/role-resource-scope.entity';
 import { DataScope } from '../enums/data-scope.enum';
+import { UserCompany } from '../../organization/entities/user-company.entity';
+import { UserBranch } from '../../organization/entities/user-branch.entity';
+import { UserWarehouse } from '../../organization/entities/user-warehouse.entity';
+import { MembershipStatus } from '../../organization/entities/membership-status.enum';
 
 describe('DataScopeService', () => {
   let service: DataScopeService;
   let userRoleRepository: jest.Mocked<Pick<Repository<UserRole>, 'find'>>;
+  let userCompanyRepository: jest.Mocked<Pick<Repository<UserCompany>, 'find'>>;
+  let userBranchRepository: jest.Mocked<Pick<Repository<UserBranch>, 'find'>>;
+  let userWarehouseRepository: jest.Mocked<
+    Pick<Repository<UserWarehouse>, 'find'>
+  >;
 
   const buildScope = (
     resource: string,
@@ -21,8 +30,14 @@ describe('DataScopeService', () => {
 
   beforeEach(() => {
     userRoleRepository = { find: jest.fn() };
+    userCompanyRepository = { find: jest.fn() };
+    userBranchRepository = { find: jest.fn() };
+    userWarehouseRepository = { find: jest.fn() };
     service = new DataScopeService(
       userRoleRepository as unknown as Repository<UserRole>,
+      userCompanyRepository as unknown as Repository<UserCompany>,
+      userBranchRepository as unknown as Repository<UserBranch>,
+      userWarehouseRepository as unknown as Repository<UserWarehouse>,
     );
   });
 
@@ -95,6 +110,83 @@ describe('DataScopeService', () => {
     expect(result).toEqual({
       scope: DataScope.Branch,
       scopeValue: 'branch-456',
+    });
+  });
+
+  describe('resolveAllowedOrganizationIds', () => {
+    it('returns null for ALL scope (short-circuit, no membership query)', async () => {
+      const result = await service.resolveAllowedOrganizationIds('user-1', {
+        scope: DataScope.All,
+        scopeValue: null,
+      });
+
+      expect(result).toBeNull();
+      expect(userCompanyRepository.find).not.toHaveBeenCalled();
+      expect(userBranchRepository.find).not.toHaveBeenCalled();
+      expect(userWarehouseRepository.find).not.toHaveBeenCalled();
+    });
+
+    it("resolves COMPANY scope to the user's active company membership IDs", async () => {
+      userCompanyRepository.find.mockResolvedValue([
+        { companyId: 'company-a' } as UserCompany,
+        { companyId: 'company-b' } as UserCompany,
+      ]);
+
+      const result = await service.resolveAllowedOrganizationIds('user-1', {
+        scope: DataScope.Company,
+        scopeValue: null,
+      });
+
+      expect(result).toEqual(['company-a', 'company-b']);
+      expect(userCompanyRepository.find).toHaveBeenCalledWith({
+        where: { userId: 'user-1', status: MembershipStatus.Active },
+      });
+    });
+
+    it("resolves BRANCH scope to the user's active branch membership IDs", async () => {
+      userBranchRepository.find.mockResolvedValue([
+        { branchId: 'branch-a1' } as UserBranch,
+      ]);
+
+      const result = await service.resolveAllowedOrganizationIds('user-1', {
+        scope: DataScope.Branch,
+        scopeValue: null,
+      });
+
+      expect(result).toEqual(['branch-a1']);
+    });
+
+    it("resolves WAREHOUSE scope to the user's active warehouse membership IDs", async () => {
+      userWarehouseRepository.find.mockResolvedValue([
+        { warehouseId: 'warehouse-a1' } as UserWarehouse,
+      ]);
+
+      const result = await service.resolveAllowedOrganizationIds('user-1', {
+        scope: DataScope.Warehouse,
+        scopeValue: null,
+      });
+
+      expect(result).toEqual(['warehouse-a1']);
+    });
+
+    it('returns an empty array (safe default) for scope kinds it does not resolve', async () => {
+      const result = await service.resolveAllowedOrganizationIds('user-1', {
+        scope: DataScope.Own,
+        scopeValue: null,
+      });
+
+      expect(result).toEqual([]);
+    });
+
+    it('only queries active memberships — inactive rows never appear in the result', async () => {
+      userCompanyRepository.find.mockResolvedValue([]);
+
+      const result = await service.resolveAllowedOrganizationIds('user-1', {
+        scope: DataScope.Company,
+        scopeValue: null,
+      });
+
+      expect(result).toEqual([]);
     });
   });
 });

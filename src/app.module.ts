@@ -16,6 +16,8 @@ import { UsersModule } from './modules/users/users.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { OrganizationModule } from './modules/organization/organization.module';
+import { EmployeesModule } from './modules/employees/employees.module';
+import { SalesAccountsModule } from './modules/sales-accounts/sales-accounts.module';
 
 @Module({
   imports: [
@@ -39,6 +41,8 @@ import { OrganizationModule } from './modules/organization/organization.module';
     AuthModule,
     RbacModule,
     OrganizationModule,
+    EmployeesModule,
+    SalesAccountsModule,
   ],
 })
 export class AppModule implements NestModule {

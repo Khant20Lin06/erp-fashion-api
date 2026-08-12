@@ -13,7 +13,7 @@ The full phase specifications live in this same `‌ai/` folder (`PHASE 00.md`,
 
 ## Current Phase
 
-**Phase 07 — Organization / Company / Branch / Warehouse**
+**Phase 08 — User / Employee / Account Management**
 
 Status: **Completed**
 
@@ -413,6 +413,138 @@ Known/accepted gaps carried forward:
 - `@nestjs/swagger`'s transitive `js-yaml` advisory (unchanged since
   Phase 01, dev-time only).
 
+### Phase 08 — User / Employee / Account Management
+
+Status: Completed.
+
+- **User administration** (`src/modules/users/`): `UsersService`/
+  `UsersController` added over the existing (Phase 05) `User` entity — no
+  duplication of the entity or of authentication logic. Reuses the 4
+  `users.read/create/update/delete` permissions Phase 06 had already
+  seeded with no controller to consume them. New permission actions:
+  `users.activate`, `users.deactivate`, `users.lock`, `users.unlock`.
+  `UserStatus` gained a 4th value, `LOCKED`, additive to the existing
+  `ACTIVE/INACTIVE/SUSPENDED` — `AuthService`'s existing `status !==
+  ACTIVE` checks needed no changes to correctly deny locked users.
+  `UsersService.create()` reuses `PasswordService` (Argon2id) — no second
+  hashing implementation. Response DTOs never include `passwordHash`.
+- **Employee** (`src/modules/employees/`, new module): separate entity
+  from User — `userId` nullable and unique (`UNIQUE(user_id)` where not
+  null), so an Employee can exist without login and a User can exist
+  without an Employee (verified by dedicated tests both directions).
+  `employeeCode` unique per company. `companyId`/`branchId` required,
+  immutable after creation, validated against real active Company/Branch
+  rows with the same `branch.companyId === companyId` consistency check
+  Phase 07 uses for Warehouse. Department/Position columns were
+  deliberately **not** added — no backend Master Data table exists yet to
+  reference, and the spec explicitly permits deferring them.
+  `EmployeesService.terminate()` sets `TERMINATED` and, only when the
+  linked User exists and is still `ACTIVE`, deactivates it in the same
+  transaction — an explicit step, not an implicit cascade; historical
+  data is never touched.
+- **Organizational membership** (`src/modules/organization/entities/
+  user-company.entity.ts`, `user-branch.entity.ts`,
+  `user-warehouse.entity.ts` + `UserOrganizationService`/
+  `UserOrganizationController`, living inside the existing
+  `OrganizationModule`): three normalized many-to-many join tables
+  (`UNIQUE(user_id, company_id)` etc.), `status` (ACTIVE/INACTIVE) +
+  `isPrimary`. **Company-before-branch rule enforced transactionally**: a
+  Branch membership requires an existing active Company membership for
+  that branch's own company (verified live — rejecting the branch
+  assignment 400s until company membership exists, then 201s
+  immediately after). **Warehouse hierarchy integrity enforced**: a
+  Warehouse membership requires an active Branch membership for the
+  warehouse's *real* parent branch, resolved server-side — verified by a
+  dedicated e2e test reproducing the exact "Warehouse actually belongs to
+  a different branch than claimed" spoofing scenario, which is correctly
+  rejected. Multi-membership confirmed working (a user can hold two
+  simultaneous active Company memberships).
+- **DataScope integration — the Phase 06/07/08 convergence point**:
+  `DataScopeService` (Phase 06, untouched otherwise) gained exactly one
+  new method, `resolveAllowedOrganizationIds(userId, resolvedScope)`,
+  resolving a previously-computed `COMPANY`/`BRANCH`/`WAREHOUSE` scope
+  into the real membership-derived ID list (`ALL` short-circuits to
+  `null`, unresolvable scope kinds return `[]` as a safe default). No
+  second resolution engine, no change to `resolveScope()`'s existing
+  breadth-ordering algorithm — this was the exact integration point
+  `docs/ORGANIZATION_ARCHITECTURE.md` had flagged as pending since Phase
+  07.
+- **Sales Account foundation** (`src/modules/sales-accounts/`, new
+  module): `SalesAccount` (sales ownership/portfolio identity — never
+  named bare "Account," to avoid colliding with the unrelated
+  Accounting/GL Account concept already present in the frontend) and
+  `SalesAccountAssignment` (normalized, history-preserving: unassignment
+  sets `INACTIVE` + `unassignedAt`, never deletes the row). Employee↔
+  SalesAccount is 1─N via the assignment table, not a bare
+  `Employee.salesAccountId` field, per the locked decision. Cross-company/
+  cross-branch/spoofed-user assignment all explicitly rejected and
+  covered by tests — in particular, `SalesAccountAssignmentService.assign()`
+  verifies the supplied `userId` actually matches the target Employee's
+  linked `userId`, preventing an attacker from claiming someone else's
+  employee record. `SalesAccountAccessService.getAllowedSalesAccountIds()`
+  is the reusable ownership-resolution contract Phase 12 will consume —
+  deliberately kept separate from `DataScopeService` (Sales Account
+  ownership is a Sales-domain business rule, not a generic organizational
+  scope).
+- **APIs**: `/users` (+activate/deactivate/lock/unlock),
+  `/users/:userId/companies|branches|warehouses` (membership),
+  `/employees` (+user link/unlink/terminate/activate/deactivate),
+  `/sales-accounts` (+activate/deactivate) and
+  `/sales-accounts/:id/assignments` (+unassign). Full list in
+  `docs/USER_EMPLOYEE_ACCOUNT_ARCHITECTURE.md`.
+- **Tests**: 55 new unit tests (`UsersService`, `EmployeesService`,
+  `UserOrganizationService`, `SalesAccountsService`,
+  `SalesAccountAssignmentService`, `SalesAccountAccessService`, plus 6 new
+  `DataScopeService.resolveAllowedOrganizationIds` cases) + 26 new e2e
+  tests (`test/user-employee-account.e2e-spec.ts` — full CRUD, the
+  company-before-branch rule, the warehouse-hierarchy spoofing rejection,
+  employee termination cascading to a linked user, LOCKED-user login
+  denial, the exact "Sales Staff A/B assignments never overlap" scenario
+  from the spec, and userId-spoofing rejection on Sales Account
+  assignment). Total suite after Phase 08: **164 unit tests / 100 e2e
+  tests, all passing** (`npm test`, `npm run test:e2e`).
+- Security review performed and verified live through the running Docker
+  container: unauthenticated → 401, authenticated-without-permission →
+  403 (including membership assignment specifically), cross-company
+  Employee/Branch mismatch → 400, spoofed warehouse hierarchy → 400,
+  duplicate employee/sales-account code → 409, duplicate membership →
+  409, inactive Sales Account cannot receive new assignment → 400,
+  locked user cannot authenticate → 401, IDOR on nonexistent
+  employee/sales-account id → 404, Sales Account assignment userId
+  spoofing → 400.
+- `docs/USER_EMPLOYEE_ACCOUNT_ARCHITECTURE.md` documents the full
+  architecture, including the Account/SalesAccount/GL-Account naming
+  distinction and the exact company-before-branch and warehouse-hierarchy
+  rules.
+- Verified: zero hard-coded role-name checks (`grep -rn "role\s*===" `)
+  and zero `SUPER_ADMIN` string checks anywhere in the four new/modified
+  modules. Zero Phase 09+ terms (Customer/Supplier/SalesOrder/
+  SalesInvoice/PurchaseOrder/InventoryLedger/JournalEntry/Payroll) found
+  in the new modules — no scope creep. Zero frontend files touched. No
+  new npm dependencies were added (Phase 08 reused Phase 03/04/05/06/07's
+  TypeORM/validation/transaction/auth/RBAC/organization infrastructure
+  entirely).
+- **Test infrastructure note**: the new e2e suite
+  (`user-employee-account.e2e-spec.ts`) also depends on live Super Admin
+  permission state, same as `rbac.e2e-spec.ts` and
+  `organization.e2e-spec.ts` before it. The `--runInBand` fix already
+  applied to the `test:e2e` npm script in Phase 07 continues to keep all
+  6 suites (100 tests) passing together with no cross-suite race.
+
+Known/accepted gaps carried forward:
+
+- `SalesAccountAccessService` has no consumer yet — Phase 12 is the
+  intended caller. This is the designed integration seam, not a gap.
+- No `isPrimary` enforcement beyond the column existing — no current API
+  sets it to `true`. Deferred until a concrete "current company/branch"
+  UI need appears.
+- No `X-Company-Id`/`X-Branch-Id` active-context header handling —
+  correctly deferred per Phase 07's own analysis until a business module
+  needs "current operating context."
+- No Bruno API collection — consistent with every prior phase.
+- `@nestjs/swagger`'s transitive `js-yaml` advisory (unchanged since
+  Phase 01, dev-time only).
+
 ---
 
 ## Notes for Future Sessions
@@ -454,19 +586,22 @@ Known/accepted gaps carried forward:
   suites depend on shared live RBAC state (any suite touching
   `role_permissions`/`user_roles` globally), or intermittent 403s from
   cross-suite races will result.
-- Next phase: **Phase 08 — Employee / User Administration / Sales
-  Account**. Phase 07's `Company`/`Branch`/`Warehouse` entities and their
-  services/APIs are ready for Phase 08 to build `UserCompany`/
-  `UserBranch`/`UserWarehouse` membership tables against, without any
-  redesign of the organization schema. `DataScopeService`'s scope→ID
-  resolution (COMPANY/BRANCH/WAREHOUSE → real allowed-ID lists) is the
-  key piece Phase 08 unblocks — see `docs/ORGANIZATION_ARCHITECTURE.md`'s
-  "Data Scope Integration" section for exactly what is and is not built
-  yet. The frontend `role`/`permissions` response-shape gap (flagged since
-  Phase 05) still has a real backend answer via `GET /auth/me/permissions`
-  but frontend wiring remains undone (backend-only phases so far). The
-  frontend also has three mutually-incompatible Company/Branch/Warehouse
-  models (`features/admin`, `features/inventory`, `features/hr`) that
-  were deliberately not used as a template for this phase's schema —
-  reconciling them is a frontend task for whenever frontend integration
-  begins, not resolved by Phase 07.
+- Next phase: **Phase 09 — Master Data**. Phase 08's `User`, `Employee`,
+  `UserCompany`/`UserBranch`/`UserWarehouse`, `SalesAccount`, and
+  `SalesAccountAssignment` entities and services/APIs are ready for Phase
+  09 to reference without any redesign. `DataScopeService.
+  resolveAllowedOrganizationIds()` and `SalesAccountAccessService.
+  getAllowedSalesAccountIds()` are the two reusable resolution contracts
+  future business modules (Phase 12 Sales especially) should call rather
+  than re-deriving visibility logic — see
+  `docs/USER_EMPLOYEE_ACCOUNT_ARCHITECTURE.md`. The frontend `role`/
+  `permissions` response-shape gap (flagged since Phase 05) still has a
+  real backend answer via `GET /auth/me/permissions` but frontend wiring
+  remains undone (backend-only phases so far). The frontend also has
+  three mutually-incompatible Company/Branch/Warehouse models and,
+  separately, three mutually-incompatible User/Employee/Account-adjacent
+  models (`AdminUser`, `AuthUser` with its closed role enum, `Employee`)
+  plus zero existing "Sales Account" concept at all — none of these were
+  used as a template for Phase 08's schema; reconciling/building the
+  frontend is a task for whenever frontend integration begins, not
+  resolved by Phase 07 or Phase 08.

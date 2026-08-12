@@ -5,6 +5,9 @@ import { Permission } from './entities/permission.entity';
 import { RolePermission } from './entities/role-permission.entity';
 import { UserRole } from './entities/user-role.entity';
 import { RoleResourceScope } from './entities/role-resource-scope.entity';
+import { UserCompany } from '../organization/entities/user-company.entity';
+import { UserBranch } from '../organization/entities/user-branch.entity';
+import { UserWarehouse } from '../organization/entities/user-warehouse.entity';
 import { AuthorizationService } from './services/authorization.service';
 import { DataScopeService } from './services/data-scope.service';
 import { RolesService } from './services/roles.service';
@@ -25,6 +28,9 @@ import { AuthModule } from '../auth/auth.module';
       RolePermission,
       UserRole,
       RoleResourceScope,
+      UserCompany,
+      UserBranch,
+      UserWarehouse,
     ]),
     AuthModule,
   ],
