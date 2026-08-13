@@ -26,6 +26,15 @@ import { ProductVariantAttribute } from '../modules/products/entities/product-va
 import { ProductVariantBarcode } from '../modules/products/entities/product-variant-barcode.entity';
 import { PriceList } from '../modules/products/entities/price-list.entity';
 import { PriceListItem } from '../modules/products/entities/price-list-item.entity';
+import { Customer } from '../modules/customer-supplier/entities/customer.entity';
+import { Supplier } from '../modules/customer-supplier/entities/supplier.entity';
+import { CustomerGroup } from '../modules/customer-supplier/entities/customer-group.entity';
+import { SupplierGroup } from '../modules/customer-supplier/entities/supplier-group.entity';
+import { PaymentTerm } from '../modules/customer-supplier/entities/payment-term.entity';
+import { CustomerAddress } from '../modules/customer-supplier/entities/customer-address.entity';
+import { SupplierAddress } from '../modules/customer-supplier/entities/supplier-address.entity';
+import { CustomerContact } from '../modules/customer-supplier/entities/customer-contact.entity';
+import { SupplierContact } from '../modules/customer-supplier/entities/supplier-contact.entity';
 
 /**
  * Entities are imported explicitly rather than discovered via a glob.
@@ -63,6 +72,15 @@ const entities = [
   ProductVariantBarcode,
   PriceList,
   PriceListItem,
+  Customer,
+  Supplier,
+  CustomerGroup,
+  SupplierGroup,
+  PaymentTerm,
+  CustomerAddress,
+  SupplierAddress,
+  CustomerContact,
+  SupplierContact,
 ];
 
 export function buildDataSourceOptions(

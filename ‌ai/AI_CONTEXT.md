@@ -13,7 +13,7 @@ The full phase specifications live in this same `‌ai/` folder (`PHASE 00.md`,
 
 ## Current Phase
 
-**Phase 10 — Product / Variant / Pricing**
+**Phase 11 — Customer / Supplier**
 
 Status: **Completed**
 
@@ -806,6 +806,187 @@ Known/accepted gaps carried forward:
 - `@nestjs/swagger`'s transitive `js-yaml` advisory (unchanged since
   Phase 01, dev-time only).
 
+### Phase 11 — Customer / Supplier
+
+Status: Completed.
+
+- **Boundary**: `Customer`, `Supplier`, `CustomerGroup`, `SupplierGroup`,
+  `PaymentTerm`, `CustomerAddress`, `SupplierAddress`, `CustomerContact`,
+  `SupplierContact` — nine entities in a new
+  `src/modules/customer-supplier/` module. No `Party`/`BusinessParty`
+  shared abstraction (Customer and Supplier are independently modeled —
+  locked decision), no `Currency` entity, no GL Account/Chart of Accounts
+  table, no `CustomerSalesAccountAssignment`, no Audit Log system
+  (confirmed none exists anywhere in this codebase as of Phase 10 — a
+  pre-existing gap, not introduced here).
+- **Customer/Supplier model**: company-scoped
+  (`companyId → companies`, `ON DELETE RESTRICT`), `UNIQUE(company_id,
+  customer_code)` / `UNIQUE(company_id, supplier_code)`. `branchId` is
+  optional (nullable FK to `branches`), validated against the resolved
+  company exactly like Warehouse (Phase 07) / Employee (Phase 08) when
+  supplied — never required, since neither Phase 11.md's own field list
+  nor the locked constraints demand one. Both soft-deleted
+  (`deletedAt`), never hard-deleted — preserves the identity Phase 12/13
+  will reference.
+- **Credit configuration**: Customer gets `creditLimit`
+  (`DECIMAL(14,2)`, `>= 0`) + `creditDays` (`INT`, `>= 0`); Supplier gets
+  `creditDays` only (no `creditLimit` — not in Phase 11.md's Supplier
+  field list). Both validated with a non-negative-decimal regex at the
+  DTO layer (a plain `@IsNumberString()` does not reject a negative sign —
+  this gap was found via a real failing e2e test during this phase's own
+  verification and fixed with an explicit `^\d+(\.\d{1,2})?$` pattern).
+  No credit-blocking logic exists — configured master data only.
+- **Payment Terms**: one shared, company-scoped `PaymentTerm` entity
+  (`code`, `name`, `dueDays`, `status`) referenced by both Customer and
+  Supplier via `paymentTermId` — kept semantically separate from Credit
+  Limit (Payment Terms = when due; Credit Limit = how much exposure is
+  allowed). No values hardcoded/seeded.
+- **Opening Balance**: `opening_balance_amount` (exact snake_case DB
+  column name, `DECIMAL(14,2)`, default `0.00`) on both tables — initial
+  master-data only, explicitly never a live/current balance, never
+  recalculated, never ledger-writing. No field named
+  `balance`/`currentBalance`/`outstandingBalance`/`accountBalance` exists
+  anywhere in the response shape (grep- and e2e-test-verified). Its
+  relationship to a real ledger is deferred entirely to **Phase 17**.
+- **Accounting mapping placeholders**: `Customer.receivableAccountId` /
+  `Supplier.payableAccountId` — nullable `CHAR(36)` UUID columns with
+  **no foreign key constraint** (no GL Account table exists yet to point
+  to; inventing one now was explicitly forbidden). Inert until Phase 17.
+- **SalesAccount / DataScope.ACCOUNT — deliberate deferral**: no
+  `CustomerSalesAccountAssignment` table, no permanent SalesAccount
+  relationship on Customer/Supplier. Sales attribution is a Phase 12
+  transaction-time business rule, not Phase 11 master data.
+  `DataScopeService` (Phase 06/08, untouched) resolves
+  `COMPANY`/`BRANCH`/`WAREHOUSE`/`ORGANIZATION`/`ALL` scopes only for
+  Phase 11 resources, via the same `resolveRequestCompanyId()` helper
+  Phase 09/10 already established — `ACCOUNT` scope is left unresolved
+  on purpose (an `ACCOUNT`-scoped role currently sees nothing on
+  Customer/Supplier, per `resolveAllowedOrganizationIds()`'s existing
+  Phase 08 "unresolvable scope → `[]`" contract), documented explicitly
+  as a Phase 12 integration point, not a silently-missed gap.
+- **Addresses/Contacts**: separate `CustomerAddress`/`SupplierAddress`/
+  `CustomerContact`/`SupplierContact` tables — never a shared
+  `PartyAddress`/`PartyContact`. Ownership always re-verified server-side
+  via `CustomersService.findByIdInCompany()` /
+  `SuppliersService.findByIdInCompany()` before any address/contact
+  mutation — a cross-company or nonexistent owner id is 404, never a
+  leaked existence signal. `isPrimary` is a single-primary-per-owner
+  invariant enforced at the service layer (MySQL cannot express a partial
+  unique index) — verified live that creating two addresses each with
+  `isPrimary: true` leaves exactly one primary. Both soft-deleted.
+- **CustomerGroup/SupplierGroup**: real, persisted, configurable
+  entities mirroring the Phase 09 Brand/Collection pattern exactly
+  (company-scoped code uniqueness, ACTIVE/INACTIVE status, soft delete,
+  full CRUD). `remove()` blocked (409) while any Customer/Supplier still
+  references the group — mirrors the Phase 09 Category
+  RESTRICT-on-children precedent.
+- **RBAC integration (reused, not duplicated)**: 36 new
+  `resource.action` permissions (`customers.*`, `suppliers.*`,
+  `customer_groups.*`, `supplier_groups.*`, `payment_terms.*`,
+  `customer_addresses.*`, `supplier_addresses.*`, `customer_contacts.*`,
+  `supplier_contacts.*` — read/create/update/delete each) added to the
+  existing idempotent seed, granted to SUPER_ADMIN, plus the
+  now-standard `RoleResourceScope` ALL-scope grant per new resource (the
+  Phase 09-discovered gap-closing step, repeated correctly here without
+  rediscovering the gap). Verified idempotent on re-run (zero output).
+- **APIs**: `/customers`, `/suppliers` (+ activate/deactivate/**block**/
+  delete), `/customer-groups`, `/supplier-groups`, `/payment-terms` (+
+  activate/deactivate/delete, 409 while referenced), plus the dual
+  nested+flat address/contact routes mirroring Phase 10's
+  `/products/:id/variants` + `/product-variants/:id` pattern exactly
+  (`/customers/:id/addresses` + `/customer-addresses/:id`, and the
+  Supplier/Contact equivalents). Full list in
+  `docs/CUSTOMER_SUPPLIER_ARCHITECTURE.md`.
+- **Migration**: `1786534701530-CreateCustomerSupplierTables.ts` — nine
+  tables. Verified UP→DOWN→UP against real Dockerized MySQL with actual
+  `SHOW CREATE TABLE` schema inspection (correct FKs — RESTRICT on
+  company/branch/group/payment-term references, CASCADE on
+  customer_id/supplier_id owner references; correct unique indexes;
+  InnoDB/utf8mb4/utf8mb4_unicode_ci). No migration bugs this time — the
+  widest composite unique index (`company_id CHAR(36)` +
+  `customer_code VARCHAR(50)`) was checked proactively against MySQL's
+  3072-byte key-length limit before writing the migration (344 bytes,
+  far under the limit) rather than discovered after a failure.
+- **Transactions**: `TransactionService.run()` is **not** used anywhere
+  in this phase — every write is a single-table, single-row operation;
+  addresses/contacts are always created via their own separate endpoints,
+  never inline with Customer/Supplier creation, so no multi-table atomic
+  requirement exists.
+- **Tests**: 54 new unit tests across 9 spec files (one per service) +
+  38 new e2e tests (`test/customer-supplier.e2e-spec.ts` — auth/
+  permission boundaries, full CRUD for all nine resources, duplicate-code
+  rejection, company/branch cross-company isolation, group/payment-term
+  reference validation, credit-limit non-negative validation, opening-
+  balance persistence-without-balance-semantics, address/contact
+  ownership IDOR-safety and primary-un-setting behavior, 409-while-
+  referenced for groups/payment-terms, unknown-field rejection, and a
+  dedicated "no gl_accounts/accounts/chart_of_accounts/
+  customer_sales_account_assignments table exists" proof). Total suite
+  after Phase 11: **293 unit tests (300 including 7 DB-gated skips) /
+  186 e2e tests, all passing** (`npm test`, and
+  `./node_modules/.bin/jest --config ./test/jest-e2e.json --runInBand`
+  — `npm run test:e2e` itself hit a transient shell/PATH exit-127 in
+  this session unrelated to the code; direct invocation of the same
+  underlying jest command passed cleanly and repeatably).
+- **Two real bugs found during this phase's own e2e verification** (not
+  pre-existing): (1) `creditLimit`/`openingBalanceAmount` DTOs originally
+  used bare `@IsNumberString()`, which does not reject a leading `-` —
+  fixed with an explicit non-negative-decimal regex on all four DTOs
+  (Create/Update × Customer/Supplier). (2) The e2e suite's `afterAll`/
+  `beforeAll` cleanup originally deleted `companies` before the
+  `branches` created by the branch-scope tests, tripping the same class
+  of FK-ordering issue documented in Phase 09/10 — fixed by adding a
+  scoped `branches` cleanup query (via the companies' own code prefix)
+  before the `companies` delete, in both `beforeAll` and `afterAll`.
+- Security review performed and verified live: unauthenticated → 401,
+  authenticated-without-permission → 403, cross-company Customer/
+  Supplier/Group/PaymentTerm/Address/Contact lookup → 404 (never a
+  leaked existence signal), spoofed cross-company branchId → 400,
+  spoofed cross-company customerGroupId/supplierGroupId/paymentTermId →
+  404, duplicate customerCode/supplierCode/group-code/payment-term-code
+  → 409, negative creditLimit → 400, delete-group/payment-term-while-
+  referenced → 409, unknown/extra fields (e.g. `currentBalance`) → 400
+  (existing global `ValidationPipe`), IDOR-safe address/contact
+  ownership (cross-company owner id → 404, never created).
+- `docs/CUSTOMER_SUPPLIER_ARCHITECTURE.md` documents the full
+  architecture and doubles as this phase's Decision Record (no separate
+  decision-record artifact existed before this session) — includes an
+  explicit "Locked Decisions" section, the Opening Balance "NOT current
+  balance" statement, the Accounting Mapping Placeholder rationale, the
+  SalesAccount/DataScope.ACCOUNT deferral, and a full "Intentionally
+  Deferred / Not Built" list.
+- Verified: zero `Sales Order`/`Sales Invoice`/`Sales Return`/`Purchase
+  Order`/`Purchase Invoice`/`Purchase Return`/`Inventory transaction`/
+  `Stock movement`/`Payment transaction`/`Journal Entry`/`General
+  Ledger`/`Chart of Accounts`/`Promotion`/`Coupon`/`Tax engine`/
+  `Currency`(-entity)/`Unit`/`UOM`/`SalesAccount`-assignment-table/
+  current-balance-calculation references anywhere in
+  `src/modules/customer-supplier` (grepped — the only matches found were
+  doc-comments explicitly stating these do NOT exist, never real code).
+  Zero frontend files touched. No new npm dependencies were added (Phase
+  11 reused Phase 03/04/06/07/09's TypeORM/validation/transaction/RBAC/
+  organization/master-data infrastructure entirely).
+- **Not committed**: per explicit instruction, this phase's work remains
+  uncommitted in the working tree — no `git commit`, no `git push`.
+
+Known/accepted gaps carried forward:
+
+- `DataScope.ACCOUNT` remains unresolved for Customer/Supplier — Phase 12
+  is the intended resolver once it defines transaction-time Sales Account
+  attribution. This is the designed integration seam, not a gap.
+- No Audit Log system exists anywhere in this codebase (confirmed absent
+  as of Phase 10, still absent after Phase 11) — Phase 11.md §20 asked to
+  reuse one if it existed; since it does not, none was invented. Any
+  future phase that needs audit trails must build that infrastructure
+  first, not assume Phase 11 provides it.
+- `receivable_account_id`/`payable_account_id` have no FK — entirely
+  inert until Phase 17 introduces a real Chart of Accounts table.
+- `opening_balance_amount` has no relationship to any ledger — Phase 17
+  is expected to read it once as a seed value, not extend it in place.
+- No Bruno API collection — consistent with every prior phase.
+- `@nestjs/swagger`'s transitive `js-yaml` advisory (unchanged since
+  Phase 01, dev-time only).
+
 ---
 
 ## Notes for Future Sessions
@@ -879,25 +1060,38 @@ Known/accepted gaps carried forward:
   had to be manually dropped (with explicit confirmation) before retrying
   the corrected migration. Check for this kind of leftover state before
   re-running a migration that failed partway through.
-- Next phase: **Phase 11** (Customer/Supplier). Phase 10's `Product`,
-  `ProductVariant`, and `PriceListItem` entities/services/APIs are ready
-  for Phase 11+ to reference without any redesign — see
-  `docs/PRODUCT_VARIANT_PRICING_ARCHITECTURE.md`'s Phase 12/13/14
-  integration-point sections for the exact expected contracts
-  (`ProductVariant.id` as the one stable cross-phase identity; Sales/
-  Purchase must snapshot values at transaction time, never live-reference
-  Product/Price state). `DataScopeService.resolveAllowedOrganizationIds()`
-  and `SalesAccountAccessService.getAllowedSalesAccountIds()` remain the
-  two reusable resolution contracts future business modules (Phase 12
-  Sales especially) should call rather than re-deriving visibility logic
-  — see `docs/USER_EMPLOYEE_ACCOUNT_ARCHITECTURE.md`. The frontend `role`/
-  `permissions` response-shape gap (flagged since Phase 05) still has a
-  real backend answer via `GET /auth/me/permissions` but frontend wiring
-  remains undone (backend-only phases so far). The frontend also has
-  three mutually-incompatible Company/Branch/Warehouse models and,
-  separately, three mutually-incompatible User/Employee/Account-adjacent
-  models (`AdminUser`, `AuthUser` with its closed role enum, `Employee`)
-  plus zero existing "Sales Account" concept at all — none of these were
-  used as a template for Phase 08's schema; reconciling/building the
-  frontend is a task for whenever frontend integration begins, not
-  resolved by Phase 07, 08, 09, or 10.
+- Next phase: **Phase 12 — Sales**. Phase 11's `Customer`, `CustomerGroup`,
+  `PaymentTerm`, `CustomerAddress`, and `CustomerContact` entities/
+  services/APIs are ready for Phase 12 to reference without any redesign
+  — see `docs/CUSTOMER_SUPPLIER_ARCHITECTURE.md`'s "Phase 12/13/16/17
+  Integration Points" section for the exact expected contracts:
+  `Customer.id` is the one stable cross-phase identity (never
+  re-derive); Sales must snapshot Customer name/contact/credit values at
+  transaction time, never live-reference mutable Customer fields (same
+  "snapshot, don't live-reference" principle
+  `docs/PRODUCT_VARIANT_PRICING_ARCHITECTURE.md` established for
+  Product/Price); `DataScopeService.resolveAllowedOrganizationIds()`
+  remains the reusable resolution contract to call rather than
+  re-deriving visibility logic; Phase 12 owns defining the real
+  transaction-time Sales Account attribution model that Phase 11
+  deliberately left `DataScope.ACCOUNT` unresolved for (no
+  `CustomerSalesAccountAssignment` table exists — Phase 12 decides
+  whether attribution is per-transaction, not a permanent assignment);
+  `Customer.receivableAccountId` remains an inert placeholder awaiting a
+  real FK once Phase 17 introduces a Chart of Accounts table.
+  `SalesAccountAccessService.getAllowedSalesAccountIds()` (Phase 08)
+  remains the separate, still-unconsumed reusable ownership-resolution
+  contract Phase 12 should also call — see
+  `docs/USER_EMPLOYEE_ACCOUNT_ARCHITECTURE.md`.
+  The frontend `role`/`permissions` response-shape gap (flagged since
+  Phase 05) still has a real backend answer via `GET
+  /auth/me/permissions` but frontend wiring remains undone (backend-only
+  phases so far). The frontend also has three mutually-incompatible
+  Company/Branch/Warehouse models and, separately, three
+  mutually-incompatible User/Employee/Account-adjacent models
+  (`AdminUser`, `AuthUser` with its closed role enum, `Employee`) plus
+  zero existing "Sales Account" concept at all — none of these were used
+  as a template for Phase 08's schema, and Phase 11 likewise did not use
+  any frontend Customer/Supplier shape as a template beyond checking
+  naming compatibility; reconciling/building the frontend is a task for
+  whenever frontend integration begins, not resolved by Phase 07-11.

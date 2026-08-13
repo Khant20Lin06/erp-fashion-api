@@ -26,8 +26,8 @@ import { DataScope } from '../../modules/rbac/enums/data-scope.enum';
  * null ("no access") when a role has no RoleResourceScope row for the
  * resource at all. Since no seed previously populated that table, this
  * seed also grants SUPER_ADMIN an ALL-scope RoleResourceScope row for each
- * of the Phase 09 and Phase 10 resources — otherwise SUPER_ADMIN itself
- * would be locked out. No other role receives one here.
+ * of the Phase 09, Phase 10, and Phase 11 resources — otherwise SUPER_ADMIN
+ * itself would be locked out. No other role receives one here.
  *
  * Safe to run multiple times: every insert is guarded by a "does this code
  * already exist" check, so re-running never creates duplicates and never
@@ -273,6 +273,155 @@ const PERMISSION_CATALOG: Array<{
     action: 'delete',
     description: 'Delete price list items',
   },
+  // Phase 11 — Customer / Supplier
+  { resource: 'customers', action: 'read', description: 'View customers' },
+  { resource: 'customers', action: 'create', description: 'Create customers' },
+  { resource: 'customers', action: 'update', description: 'Update customers' },
+  { resource: 'customers', action: 'delete', description: 'Delete customers' },
+  { resource: 'suppliers', action: 'read', description: 'View suppliers' },
+  { resource: 'suppliers', action: 'create', description: 'Create suppliers' },
+  { resource: 'suppliers', action: 'update', description: 'Update suppliers' },
+  { resource: 'suppliers', action: 'delete', description: 'Delete suppliers' },
+  {
+    resource: 'customer_groups',
+    action: 'read',
+    description: 'View customer groups',
+  },
+  {
+    resource: 'customer_groups',
+    action: 'create',
+    description: 'Create customer groups',
+  },
+  {
+    resource: 'customer_groups',
+    action: 'update',
+    description: 'Update customer groups',
+  },
+  {
+    resource: 'customer_groups',
+    action: 'delete',
+    description: 'Delete customer groups',
+  },
+  {
+    resource: 'supplier_groups',
+    action: 'read',
+    description: 'View supplier groups',
+  },
+  {
+    resource: 'supplier_groups',
+    action: 'create',
+    description: 'Create supplier groups',
+  },
+  {
+    resource: 'supplier_groups',
+    action: 'update',
+    description: 'Update supplier groups',
+  },
+  {
+    resource: 'supplier_groups',
+    action: 'delete',
+    description: 'Delete supplier groups',
+  },
+  {
+    resource: 'payment_terms',
+    action: 'read',
+    description: 'View payment terms',
+  },
+  {
+    resource: 'payment_terms',
+    action: 'create',
+    description: 'Create payment terms',
+  },
+  {
+    resource: 'payment_terms',
+    action: 'update',
+    description: 'Update payment terms',
+  },
+  {
+    resource: 'payment_terms',
+    action: 'delete',
+    description: 'Delete payment terms',
+  },
+  {
+    resource: 'customer_addresses',
+    action: 'read',
+    description: 'View customer addresses',
+  },
+  {
+    resource: 'customer_addresses',
+    action: 'create',
+    description: 'Create customer addresses',
+  },
+  {
+    resource: 'customer_addresses',
+    action: 'update',
+    description: 'Update customer addresses',
+  },
+  {
+    resource: 'customer_addresses',
+    action: 'delete',
+    description: 'Delete customer addresses',
+  },
+  {
+    resource: 'supplier_addresses',
+    action: 'read',
+    description: 'View supplier addresses',
+  },
+  {
+    resource: 'supplier_addresses',
+    action: 'create',
+    description: 'Create supplier addresses',
+  },
+  {
+    resource: 'supplier_addresses',
+    action: 'update',
+    description: 'Update supplier addresses',
+  },
+  {
+    resource: 'supplier_addresses',
+    action: 'delete',
+    description: 'Delete supplier addresses',
+  },
+  {
+    resource: 'customer_contacts',
+    action: 'read',
+    description: 'View customer contacts',
+  },
+  {
+    resource: 'customer_contacts',
+    action: 'create',
+    description: 'Create customer contacts',
+  },
+  {
+    resource: 'customer_contacts',
+    action: 'update',
+    description: 'Update customer contacts',
+  },
+  {
+    resource: 'customer_contacts',
+    action: 'delete',
+    description: 'Delete customer contacts',
+  },
+  {
+    resource: 'supplier_contacts',
+    action: 'read',
+    description: 'View supplier contacts',
+  },
+  {
+    resource: 'supplier_contacts',
+    action: 'create',
+    description: 'Create supplier contacts',
+  },
+  {
+    resource: 'supplier_contacts',
+    action: 'update',
+    description: 'Update supplier contacts',
+  },
+  {
+    resource: 'supplier_contacts',
+    action: 'delete',
+    description: 'Delete supplier contacts',
+  },
 ];
 
 /**
@@ -292,6 +441,16 @@ const SUPER_ADMIN_ALL_SCOPE_RESOURCES: readonly string[] = [
   'barcodes',
   'price_lists',
   'price_list_items',
+  // Phase 11 — Customer / Supplier
+  'customers',
+  'suppliers',
+  'customer_groups',
+  'supplier_groups',
+  'payment_terms',
+  'customer_addresses',
+  'supplier_addresses',
+  'customer_contacts',
+  'supplier_contacts',
 ];
 
 async function seed(): Promise<void> {
