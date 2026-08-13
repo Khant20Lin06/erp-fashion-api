@@ -422,6 +422,26 @@ const PERMISSION_CATALOG: Array<{
     action: 'delete',
     description: 'Delete supplier contacts',
   },
+  // Phase 12 — Sales
+  { resource: 'sales', action: 'read', description: 'View sales' },
+  { resource: 'sales', action: 'create', description: 'Create sales' },
+  {
+    resource: 'sales',
+    action: 'update',
+    description: 'Update sales (reserved for future use)',
+  },
+  {
+    resource: 'sales',
+    action: 'delete',
+    description: 'Delete sales (reserved for future use)',
+  },
+  { resource: 'sales', action: 'confirm', description: 'Confirm a draft sale' },
+  { resource: 'sales', action: 'cancel', description: 'Cancel a draft sale' },
+  {
+    resource: 'sale_items',
+    action: 'read',
+    description: 'View sale line items',
+  },
 ];
 
 /**
@@ -451,6 +471,9 @@ const SUPER_ADMIN_ALL_SCOPE_RESOURCES: readonly string[] = [
   'supplier_addresses',
   'customer_contacts',
   'supplier_contacts',
+  // Phase 12 — Sales
+  'sales',
+  'sale_items',
 ];
 
 async function seed(): Promise<void> {

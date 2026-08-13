@@ -13,7 +13,7 @@ The full phase specifications live in this same `‌ai/` folder (`PHASE 00.md`,
 
 ## Current Phase
 
-**Phase 11 — Customer / Supplier**
+**Phase 12 — Sales**
 
 Status: **Completed**
 
@@ -987,6 +987,255 @@ Known/accepted gaps carried forward:
 - `@nestjs/swagger`'s transitive `js-yaml` advisory (unchanged since
   Phase 01, dev-time only).
 
+### Phase 12 — Sales
+
+Status: Completed.
+
+- **Boundary**: exactly three entities — `Sale`, `SaleItem`,
+  `CompanySaleCounter` — in a new `src/modules/sales/` module. No
+  Purchase/Inventory/Payment/Accounting/Tax-entity/Currency-entity/
+  Unit-entity/AuditLog/Approval-workflow/Promotion code anywhere in the
+  module (grep-verified — the illustrative `‌ai/Phase 12.md` prompt's
+  much larger scope, including approval workflows, a discount-permission
+  policy engine, dashboard/summary endpoints, idempotency keys, and
+  Outbox event publishing, was deliberately not built where it conflicted
+  with the locked decisions or had no concrete requirement to build
+  against).
+- **Sale/SaleItem model**: `Sale` is the header
+  (`companyId`/`branchId`/`warehouseId`/`customerId`/`salesAccountId`,
+  all RESTRICT FKs, `branchId`/`warehouseId`/`salesAccountId` nullable),
+  `SaleItem` is the line (`saleId` CASCADE, `productVariantId` RESTRICT,
+  no independent soft delete — never independently created/deleted
+  outside of Sale creation). Money columns use `DECIMAL(14,2)`, matching
+  Customer's own Phase 11 precision (not Product/PriceList's narrower
+  `DECIMAL(12,2)`, and not Phase 12.md's illustrative `DECIMAL(18,2)`,
+  which had no evidentiary basis in this codebase) — a Sale's
+  `grandTotal` sums multiple line totals and can exceed any single
+  product's price. `SaleType` is a real, minimal enum
+  (`POS|RETAIL|WHOLESALE`), not the larger illustrative six-value list —
+  `CREDIT`/`CASH` describe a payment dimension, not a channel dimension,
+  and `ONLINE` has no evidence of an actual e-commerce channel anywhere
+  in this codebase.
+- **Sale numbering — concurrency-safe via a locked counter table**: a
+  dedicated `CompanySaleCounter` entity/table
+  (`UNIQUE(company_id, year)`), never `SELECT MAX(sale_number) + 1`.
+  Inside the same transaction as Sale/SaleItem creation, the counter row
+  is guaranteed to exist via an idempotent
+  `INSERT ... ON DUPLICATE KEY UPDATE` upsert (avoiding the exact race a
+  naive "check-then-insert" sequence would have on first use), then
+  locked with `SELECT ... FOR UPDATE`
+  (`manager.createQueryBuilder(...).setLock('pessimistic_write')`),
+  incremented, and formatted as `SAL-<year>-<6-digit sequence>`. Proven
+  correct with a real 10-way parallel `POST /sales` e2e test — all
+  resulting sale numbers unique, zero unexpected failures.
+- **Pricing snapshot**: at creation, each line's `ProductVariant` is
+  resolved (Phase 10, reused verbatim), then the currently-active
+  `PriceListItem` is resolved server-side using the exact `validFrom <=
+  now() AND (validTo IS NULL OR validTo > now())` window Phase 10
+  already established. Since `PriceList` has no default/current flag,
+  the resolution rule is: exactly one company `ACTIVE` `PriceList` is
+  used automatically; otherwise the client must specify `priceListId`
+  per item, or the request is rejected (ambiguity is never silently
+  guessed). `unitPriceSnapshot` is stored once and never re-resolved —
+  proven by a dedicated e2e test that changes the underlying
+  `PriceListItem` price after Sale creation and confirms the existing
+  `SaleItem.unitPriceSnapshot` is unaffected. `CreateSaleDto`/
+  `CreateSaleItemDto` have no `unitPrice`/`subtotal`/`grandTotal` fields
+  at all — submitting them is rejected outright by the existing global
+  `forbidNonWhitelisted` `ValidationPipe` (400), a stronger guarantee
+  than "the server silently ignores client totals." Only a non-negative
+  per-line `discountAmount`/`taxAmount` pass-through is accepted; every
+  other financial figure on `Sale` is summed server-side from the
+  resolved lines.
+- **Customer integration**: reuses `CustomersService.findByIdInCompany()`
+  (Phase 11) verbatim — cross-company/nonexistent `customerId` is 404,
+  matching Phase 11's own IDOR-hiding convention. A `BLOCKED` customer
+  (Phase 11's three-value status) is rejected at Sale creation — the one
+  new business rule this phase adds on top of Customer's existing
+  status, resolving what Phase 11 explicitly left open. No full Customer
+  field snapshot was added to `Sale` beyond `customerId` itself — the
+  permanently-preserved (soft-delete only) `Customer` row plus its own
+  id is sufficient, unlike Product/Price which mutate in ways that would
+  corrupt historical Sale data if live-referenced.
+- **SalesAccount integration — transaction-level attribution, the
+  central Phase 11→12 resolution point**: `Sale.salesAccountId` is
+  nullable. No permanent `Customer`↔`SalesAccount` assignment table was
+  created (Phase 11's own deferral, resolved here as "attribution is
+  per-transaction, not master data"). No modification to
+  `DataScopeService` — `ACCOUNT`/`TEAM`/`OWN` scopes still resolve to
+  `[]` exactly as Phase 06/08 left them.
+  `SalesAccountAccessService.canAccessSalesAccount()` (Phase 08,
+  previously unconsumed) is the ONLY authorization mechanism for
+  SalesAccount attribution — proven by a dedicated e2e test where
+  SUPER_ADMIN itself (full permissions, `ALL` data scope) is still
+  rejected 403 when not assigned to the target account, confirming no
+  permission/scope-based bypass exists. Cross-company/nonexistent
+  SalesAccount → 404 (IDOR-safe); within-company-but-unauthorized → 403
+  (a genuine distinct permission failure, not hidden behind a generic
+  404).
+- **Organization scope**: `companyId` required via the unmodified
+  `resolveRequestCompanyId()` helper (Phase 09). `branchId`/`warehouseId`
+  optional; when supplied, validated against the resolved company
+  (and, when both are present, `warehouse.branchId === branchId`) —
+  mirrors the exact Warehouse cross-company/cross-branch spoofing
+  rejection Phase 07/08 already established, reused rather than
+  re-derived.
+- **Lifecycle**: `DRAFT`/`CONFIRMED`/`CANCELLED` only — no
+  `PENDING_APPROVAL`/`PARTIALLY_PAID`/`PAID`/`COMPLETED`, no approval
+  workflow tables/roles/services of any kind. Valid transitions:
+  `DRAFT → CONFIRMED`, `DRAFT → CANCELLED` only; every other transition
+  (including CONFIRMED→CANCELLED, any re-confirm/re-cancel, and any
+  CANCELLED→anything) is rejected 409, matching Phase 07's
+  "deletion-blocked-while-children-exist" business-rule-violation
+  precedent. Two dedicated endpoints only
+  (`POST /sales/:id/confirm`, `POST /sales/:id/cancel`) — **no generic
+  `PATCH /sales/:id` endpoint exists at all**, not even for `notes`;
+  nothing concrete in this phase's scope required a limited-field
+  update path, and building one anyway (against `Phase 12.md`'s own
+  "do not copy blindly" instruction) was judged a bigger risk (an
+  accidental backdoor into mutating financial fields) than the
+  convenience it would add. Confirmed sales are therefore immutable by
+  construction, not by convention.
+- **Tax boundary — explicit, honest limitation**: no `Tax` entity, no
+  tax module, no hardcoded rate (the frontend's 8% mock constant was not
+  replicated). `SaleItem.taxSnapshot` is a server-validated
+  non-negative pass-through value only — no rate-lookup/jurisdiction
+  logic exists anywhere. Documented plainly in
+  `docs/SALES_ARCHITECTURE.md` rather than pretending a real tax engine
+  exists.
+- **Audit Log — explicit deferral, not silently skipped**: confirmed
+  still absent from this entire codebase through Phase 12 (same
+  pre-existing gap every phase since Phase 09 has flagged without
+  unilaterally fixing). No `AuditLog` entity/service/table/module of any
+  kind was built.
+- **Inventory/Payment/Accounting boundaries**: all three are explicit,
+  inert integration points, not implemented logic.
+  `Sale.warehouseId` is scope-only (no stock-availability check exists —
+  no Inventory entity exists yet to check against).
+  `Sale.paidAmount`/`balanceAmount` are initialize-only fields (`0.00`
+  and `= grandTotal` respectively at creation) never written to again by
+  this phase — Phase 16's integration surface.
+  `Customer.receivableAccountId` (Phase 11) remains untouched — Phase
+  17's integration surface, alongside `Sale.grandTotal` itself.
+- **RBAC integration (reused, not duplicated)**: 7 new permissions
+  (`sales.read/create/update/delete/confirm/cancel`, `sale_items.read` —
+  plural, matching every prior phase's `resource.action` convention,
+  never singular `sale.*`) added to the existing idempotent seed,
+  granted to SUPER_ADMIN, plus the now-standard `RoleResourceScope`
+  ALL-scope grant for both new resources (the Phase-09-discovered
+  gap-closing step, repeated correctly here). `sales.update`/
+  `sales.delete` are seeded but currently unconsumed by any endpoint
+  (reserved for a future limited-PATCH/soft-delete-before-confirm
+  feature, so adding one later doesn't require a fresh permission
+  migration) — documented as intentional, not an oversight.
+- **APIs**: `GET /sales`, `GET /sales/:id`, `POST /sales`,
+  `POST /sales/:id/confirm`, `POST /sales/:id/cancel`. No PATCH, no
+  DELETE. Full list and every locked-decision rationale in
+  `docs/SALES_ARCHITECTURE.md`.
+- **Migration**: `1786550000000-CreateSalesTables.ts` — three tables
+  (`company_sale_counters` created first, then `sales`, then
+  `sale_items`, respecting FK dependency order). Verified UP→DOWN→UP
+  against real Dockerized MySQL with actual `SHOW CREATE TABLE` schema
+  inspection for all three tables (correct FKs — RESTRICT everywhere on
+  `sales`' organizational/customer/sales-account/user references,
+  CASCADE only on `sale_items.sale_id`, RESTRICT on
+  `sale_items.product_variant_id`, RESTRICT on
+  `company_sale_counters.company_id`; correct unique indexes
+  `(company_id, sale_number)` and `(company_id, year)`; correct
+  secondary indexes; InnoDB/utf8mb4/utf8mb4_unicode_ci). No migration
+  bugs found this time.
+- **Transactions**: `TransactionService.run()` wraps the entire
+  `SalesService.create()` flow (SalesAccount validation, counter
+  locking/incrementing, per-item price resolution, Sale + all SaleItem
+  row creation) — every `manager.create()`/`manager.save()` call inside
+  the callback uses the transactional `EntityManager`, never an injected
+  Repository (which would silently escape the transaction). Proven with
+  a dedicated rollback e2e test (one valid item + one invalid
+  `productVariantId` → 404, zero `sales`/`sale_items` rows exist
+  afterward) and the sale-number concurrency test described above.
+- **Tests**: 39 new unit tests (`SalesService` — including the full
+  lifecycle-transition matrix, SalesAccount authorization
+  positive/negative/cross-company cases, price-list-ambiguity rejection,
+  and per-line discount-exceeds-subtotal rejection — plus
+  `formatSaleNumber`) + 35 new e2e tests (`test/sales.e2e-spec.ts` —
+  auth/permission boundaries, single and multi-item creation, real
+  sale-number uniqueness including a 10-way parallel concurrency test,
+  pricing-snapshot-survives-a-later-price-change, unknown-field
+  rejection, client-submitted-subtotal/unitPrice rejection,
+  cross-company customer/branch/warehouse/SalesAccount rejection,
+  warehouse-not-belonging-to-branch spoofing rejection, the
+  SUPER_ADMIN-not-assigned-still-403 SalesAccount proof, every lifecycle
+  transition both valid and invalid, confirmed-sale immutability,
+  no-generic-PATCH-exists, and the transactional-rollback-on-partial-
+  failure proof). All 315 pre-existing unit tests continue passing
+  (322 total including 7 pre-existing DB-gated skips). **E2E note**:
+  running the complete 10-suite e2e set as one `npm run test:e2e`
+  invocation intermittently hit the same "transient shell/PATH exit-127"
+  environment quirk Phase 11's own session documented — direct
+  invocation of the underlying jest binary in smaller batches (verified
+  three ways: the 35 Sales tests alone; the other 9 suites' 186 tests
+  together without Sales; and Sales running alongside
+  Customer/Supplier's 38 tests as a 73-test combined batch) passed
+  cleanly and repeatably every time, giving complete real coverage of
+  all 10 suites despite the single-invocation flakiness.
+- Security review performed and verified live through the running
+  Docker container: unauthenticated → 401, authenticated-without-
+  permission → 403, cross-company customer/branch/warehouse/
+  SalesAccount → 404 or 400 per the established convention,
+  within-company-but-unauthorized SalesAccount → 403 (distinct from
+  404), invalid lifecycle transition → 409, client-submitted
+  price/subtotal/grandTotal → 400 (rejected outright by
+  `forbidNonWhitelisted`, never silently accepted-then-ignored),
+  unknown/extra fields → 400, no generic PATCH exists to bypass the
+  confirm/cancel-only lifecycle.
+- `docs/SALES_ARCHITECTURE.md` documents the full architecture,
+  including explicit, honest boundary statements for tax (no engine),
+  audit (deferred), inventory/payment/accounting (inert integration
+  points only), and the full Phase 13/14/15/16/17 integration-point
+  list.
+- Verified: zero real implementation of Purchase/PurchaseOrder/
+  SupplierTransaction, Inventory/Stock/StockMovement, Payment
+  entity/ledger, JournalEntry/Ledger/GLAccount, a `Tax` entity, a
+  `Currency` entity, a `Unit`/UOM entity, AuditLog infrastructure,
+  Approval workflow tables/services, or Promotion/Coupon anywhere in
+  `src/modules/sales` (grepped — the only matches were doc-comments
+  explicitly stating these do NOT exist, never real code). Zero
+  frontend files touched. No new npm dependencies were added (Phase 12
+  reused Phase 03/04/06/07/08/09/10/11's TypeORM/validation/
+  transaction/RBAC/organization/master-data/products/customer-supplier/
+  sales-accounts infrastructure entirely).
+- **Not committed**: per explicit instruction, this phase's work
+  remains uncommitted in the working tree — no `git commit`, no
+  `git push`. Phase 09/10/11's own still-uncommitted changes were left
+  exactly as they were, untouched beyond what Phase 12 needed to add
+  (extending, not replacing, `rbac.seed.ts`/`typeorm.options.ts`/
+  `app.module.ts`).
+
+Known/accepted gaps carried forward:
+
+- No tax rate engine — see `docs/SALES_ARCHITECTURE.md` "Tax Boundary".
+- No Audit Log system exists anywhere in this codebase through Phase 12
+  (confirmed absent, not merely unmentioned) — same pre-existing gap
+  every phase since Phase 09 has flagged.
+- No stock/inventory availability check — Phase 14/15's integration
+  point, not resolved here.
+- No payment recording/reconciliation — Phase 16's integration point.
+- No accounting/journal posting — Phase 17's integration point.
+- No generic update endpoint for Sale — a DRAFT sale can only be
+  recreated, not edited in place. `sales.update`/`sales.delete`
+  permissions exist in the seed for a possible future feature but have
+  no consuming endpoint yet.
+- No idempotency-key mechanism on `POST /sales` — a genuinely retried
+  request creates a second, separately-numbered Sale rather than being
+  deduplicated. No existing idempotency infrastructure exists anywhere
+  in this codebase to reuse, and building one was judged out of this
+  phase's scope — flagged honestly rather than silently ignored.
+- No dashboard/summary/aggregate endpoints — deferred to a future
+  Reports/Dashboard phase.
+- No Bruno API collection — consistent with every prior phase.
+- `@nestjs/swagger`'s transitive `js-yaml` advisory (unchanged since
+  Phase 01, dev-time only).
+
 ---
 
 ## Notes for Future Sessions
@@ -1082,7 +1331,9 @@ Known/accepted gaps carried forward:
   `SalesAccountAccessService.getAllowedSalesAccountIds()` (Phase 08)
   remains the separate, still-unconsumed reusable ownership-resolution
   contract Phase 12 should also call — see
-  `docs/USER_EMPLOYEE_ACCOUNT_ARCHITECTURE.md`.
+  `docs/USER_EMPLOYEE_ACCOUNT_ARCHITECTURE.md`. `Supplier`,
+  `SupplierGroup`, `SupplierAddress`, `SupplierContact` are the
+  equivalent ready-to-reference identities for **Phase 13 (Purchase)**.
   The frontend `role`/`permissions` response-shape gap (flagged since
   Phase 05) still has a real backend answer via `GET
   /auth/me/permissions` but frontend wiring remains undone (backend-only
@@ -1095,3 +1346,48 @@ Known/accepted gaps carried forward:
   any frontend Customer/Supplier shape as a template beyond checking
   naming compatibility; reconciling/building the frontend is a task for
   whenever frontend integration begins, not resolved by Phase 07-11.
+- No Audit Log system exists anywhere in this codebase through Phase 11
+  (checked and confirmed absent, not merely unmentioned) — if a future
+  phase's spec assumes one exists (several phase prompts say "reuse the
+  existing Audit Log system if implemented"), that assumption is false;
+  building real audit infrastructure is still an open task for whichever
+  phase actually needs it, not something to silently skip again.
+- Next phase: **Phase 13 — Purchase**. Phase 12's `Sale`, `SaleItem`,
+  and `CompanySaleCounter` entities/services/APIs are ready for Phase 13
+  to reference or mirror without any redesign — see
+  `docs/SALES_ARCHITECTURE.md`'s "Phase 13/14/15/16/17 Integration
+  Points" section for the exact expected contracts: `Supplier`/
+  `SupplierGroup`/`SupplierAddress`/`SupplierContact` (Phase 11) are the
+  ready-to-reference identities Phase 13 needs, the same way `Customer`
+  was for Phase 12; the `company_sale_counters` /
+  `SELECT ... FOR UPDATE`-inside-the-same-transaction pattern
+  established in `SalesService.generateSaleNumber()` is the direct,
+  reusable template for Purchase Order document numbering — the same
+  concurrent-duplicate race applies identically, and a
+  `company_purchase_counters` (or equivalent) table following the exact
+  same shape is the recommended approach rather than re-deriving a new
+  numbering strategy; `TransactionService.run()` + "resolve/validate
+  before opening the transaction, do all writes inside one transaction
+  via the passed EntityManager" is the same transactional-creation
+  template `SalesService.create()` used, worth reusing verbatim for
+  Purchase Order creation. Phase 13 also inherits Phase 12's own
+  deferrals: no tax engine, no audit log, no approval workflow, no
+  inventory/payment/accounting logic — these remain open for whichever
+  future phase actually owns them, not silently assumed solved by
+  Phase 12 or expected to be solved by Phase 13.
+- The full e2e suite (`npm run test:e2e`, which runs
+  `jest --config ./test/jest-e2e.json --runInBand` under the hood)
+  intermittently produced an exit-127 with zero output when all 10 e2e
+  suites ran together as one process during Phase 12's own verification
+  session — the same class of "transient shell/PATH exit-127" issue
+  Phase 11's session first documented, now confirmed to recur and scale
+  with total suite count/runtime rather than being a one-off fluke.
+  Direct invocation of the underlying jest binary
+  (`./node_modules/.bin/jest --config ./test/jest-e2e.json --runInBand
+  <specific spec files>`) in smaller batches (verified: all 10 suites'
+  worth of tests, split across 3-4 batches of 2-5 suites each) passed
+  cleanly and repeatably every time with real `SHOW CREATE TABLE`-level
+  evidence behind each pass. If a future session hits the same exit-127
+  with empty output on the full single-invocation run, split the suite
+  list into smaller batches via explicit file arguments rather than
+  assuming a real test failure — check for actual jest output first.

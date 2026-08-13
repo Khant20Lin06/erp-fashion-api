@@ -35,6 +35,9 @@ import { CustomerAddress } from '../modules/customer-supplier/entities/customer-
 import { SupplierAddress } from '../modules/customer-supplier/entities/supplier-address.entity';
 import { CustomerContact } from '../modules/customer-supplier/entities/customer-contact.entity';
 import { SupplierContact } from '../modules/customer-supplier/entities/supplier-contact.entity';
+import { Sale } from '../modules/sales/entities/sale.entity';
+import { SaleItem } from '../modules/sales/entities/sale-item.entity';
+import { CompanySaleCounter } from '../modules/sales/entities/company-sale-counter.entity';
 
 /**
  * Entities are imported explicitly rather than discovered via a glob.
@@ -81,6 +84,9 @@ const entities = [
   SupplierAddress,
   CustomerContact,
   SupplierContact,
+  Sale,
+  SaleItem,
+  CompanySaleCounter,
 ];
 
 export function buildDataSourceOptions(
