@@ -5,6 +5,8 @@ import { CompanyStatus } from '../entities/company-status.enum';
 import { Branch } from '../entities/branch.entity';
 import { AppException } from '../../../core/errors/app.exception';
 import { ErrorCode } from '../../../core/errors/error-codes';
+import { CacheService } from '../../redis/cache.service';
+import { CacheKeys } from '../../redis/cache-keys';
 
 type MockedRepo<T extends object> = jest.Mocked<
   Pick<
@@ -17,6 +19,7 @@ describe('CompaniesService', () => {
   let service: CompaniesService;
   let companyRepository: MockedRepo<Company>;
   let branchRepository: MockedRepo<Branch>;
+  let cacheService: jest.Mocked<Pick<CacheService, 'get' | 'set' | 'delete'>>;
 
   const buildCompany = (overrides: Partial<Company> = {}): Company => ({
     id: 'company-1',
@@ -52,10 +55,16 @@ describe('CompaniesService', () => {
       softRemove: jest.fn(),
       count: jest.fn(),
     };
+    cacheService = {
+      get: jest.fn().mockResolvedValue(undefined),
+      set: jest.fn().mockResolvedValue(undefined),
+      delete: jest.fn().mockResolvedValue(undefined),
+    };
 
     service = new CompaniesService(
       companyRepository as unknown as Repository<Company>,
       branchRepository as unknown as Repository<Branch>,
+      cacheService as unknown as CacheService,
     );
   });
 
@@ -109,11 +118,16 @@ describe('CompaniesService', () => {
   });
 
   describe('findById', () => {
-    it('returns the company when found', async () => {
+    it('returns the company when found and populates the cache', async () => {
       const company = buildCompany();
       companyRepository.findOne.mockResolvedValue(company);
 
       await expect(service.findById('company-1')).resolves.toBe(company);
+      expect(cacheService.set).toHaveBeenCalledWith(
+        CacheKeys.companySettings('company-1'),
+        company,
+        expect.any(Number),
+      );
     });
 
     it('throws NotFound when missing', async () => {
@@ -122,6 +136,16 @@ describe('CompaniesService', () => {
       await expect(service.findById('missing')).rejects.toMatchObject({
         errorCode: ErrorCode.NotFound,
       });
+    });
+
+    it('returns the cached company without querying MySQL on a cache hit', async () => {
+      const company = buildCompany();
+      cacheService.get.mockResolvedValue(company);
+
+      const result = await service.findById('company-1');
+
+      expect(result).toBe(company);
+      expect(companyRepository.findOne).not.toHaveBeenCalled();
     });
   });
 
@@ -172,6 +196,9 @@ describe('CompaniesService', () => {
       await service.remove('company-1');
 
       expect(companyRepository.softRemove).toHaveBeenCalledWith(company);
+      expect(cacheService.delete).toHaveBeenCalledWith(
+        CacheKeys.companySettings('company-1'),
+      );
     });
 
     it('rejects deletion when active branches exist (409, no orphaning)', async () => {

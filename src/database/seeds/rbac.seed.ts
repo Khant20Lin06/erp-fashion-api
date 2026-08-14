@@ -15,11 +15,18 @@ import { DataScope } from '../../modules/rbac/enums/data-scope.enum';
  * permissions (Phase 07: companies/branches/warehouses), user/employee/
  * membership/sales-account administration permissions (Phase 08),
  * master-data administration permissions (Phase 09: categories/brands/
- * collections/attribute_options), and product/variant/pricing
- * administration permissions (Phase 10: products/product_variants/
- * barcodes/price_lists/price_list_items) are seeded here —
- * business-module permissions (sales.*, inventory.*, ...) are registered
- * by the phases that introduce those modules, not invented here.
+ * collections/attribute_options), product/variant/pricing administration
+ * permissions (Phase 10: products/product_variants/barcodes/price_lists/
+ * price_list_items), sales permissions (Phase 12), purchase order
+ * permissions (Phase 13), inventory permissions (Phase 14:
+ * warehouse_stock/goods_receipts/stock_transfers/stock_adjustments — no
+ * `.update`/`.delete`/`.approve` for any of these, matching Phase 13's
+ * zero-dead-permission precedent), and the Phase 15 Inventory Ledger
+ * permission (`inventory_ledger.read` — a single read-only permission,
+ * since Phase 15 is a purely read-only query layer over Phase 14's
+ * StockMovement/WarehouseStock tables with no create/update/delete
+ * endpoint of any kind) are seeded here — business-module permissions for
+ * phases not yet implemented are not invented here.
  *
  * Phase 09 is also the first phase whose controllers call
  * DataScopeService.resolveScope() on a real request path, which returns
@@ -442,6 +449,206 @@ const PERMISSION_CATALOG: Array<{
     action: 'read',
     description: 'View sale line items',
   },
+  // Phase 13 — Purchase (Purchase Order only)
+  {
+    resource: 'purchase_orders',
+    action: 'read',
+    description: 'View purchase orders',
+  },
+  {
+    resource: 'purchase_orders',
+    action: 'create',
+    description: 'Create purchase orders',
+  },
+  {
+    resource: 'purchase_orders',
+    action: 'confirm',
+    description: 'Confirm a draft purchase order',
+  },
+  {
+    resource: 'purchase_orders',
+    action: 'cancel',
+    description: 'Cancel a draft purchase order',
+  },
+  {
+    resource: 'purchase_order_items',
+    action: 'read',
+    description: 'View purchase order line items',
+  },
+  // Phase 14 — Inventory (WarehouseStock/GoodsReceipt/StockTransfer/StockAdjustment)
+  {
+    resource: 'warehouse_stock',
+    action: 'read',
+    description: 'View warehouse stock balances',
+  },
+  {
+    resource: 'goods_receipts',
+    action: 'read',
+    description: 'View goods receipts',
+  },
+  {
+    resource: 'goods_receipts',
+    action: 'create',
+    description: 'Receive stock against a confirmed purchase order',
+  },
+  {
+    resource: 'stock_transfers',
+    action: 'read',
+    description: 'View stock transfers',
+  },
+  {
+    resource: 'stock_transfers',
+    action: 'create',
+    description: 'Transfer stock between warehouses',
+  },
+  {
+    resource: 'stock_adjustments',
+    action: 'read',
+    description: 'View stock adjustments',
+  },
+  {
+    resource: 'stock_adjustments',
+    action: 'create',
+    description: 'Create a manual stock adjustment (including opening balance)',
+  },
+  // Phase 15 — Inventory Ledger (read-only query layer over StockMovement)
+  {
+    resource: 'inventory_ledger',
+    action: 'read',
+    description:
+      'View the inventory ledger (movement list, detail, stock card, reconciliation diagnostic)',
+  },
+  // Phase 16 — Payment. No .update/.delete/.refund/.reverse/.void/.export/
+  // .summary/.reconcile — D13/D14, LOCKED (confirmed payments are
+  // immutable, no update/delete endpoint of any kind exists). No
+  // payments.confirm either — every Payment is created directly CONFIRMED
+  // (D4 lifecycle decision, see docs/PAYMENT_ARCHITECTURE.md), so there is
+  // no separate confirm step to gate.
+  { resource: 'payments', action: 'read', description: 'View payments' },
+  {
+    resource: 'payments',
+    action: 'create',
+    description:
+      'Create and confirm a payment (receipt or payment) with allocations',
+  },
+  // PaymentMethod: read+create only, matching the locked minimal API
+  // surface (D14) — no update/delete endpoint exists for PaymentMethod in
+  // this phase.
+  {
+    resource: 'payment_methods',
+    action: 'read',
+    description: 'View payment methods',
+  },
+  {
+    resource: 'payment_methods',
+    action: 'create',
+    description: 'Create a payment method',
+  },
+  // Phase 17 — Accounting / General Ledger. Exactly D14's locked list — no
+  // .delete/.approve/.reject/.reverse/.void/general_ledger.write/etc. for
+  // any of the four resources.
+  {
+    resource: 'accounts',
+    action: 'read',
+    description: 'View chart of accounts',
+  },
+  {
+    resource: 'accounts',
+    action: 'create',
+    description: 'Create an account',
+  },
+  {
+    resource: 'accounts',
+    action: 'update',
+    description: 'Update an account (including activate/deactivate)',
+  },
+  {
+    resource: 'journal_entries',
+    action: 'read',
+    description: 'View journal entries',
+  },
+  {
+    resource: 'journal_entries',
+    action: 'create',
+    description: 'Create a draft manual journal entry',
+  },
+  {
+    resource: 'journal_entries',
+    action: 'post',
+    description: 'Post a draft journal entry (DRAFT -> POSTED)',
+  },
+  {
+    resource: 'general_ledger',
+    action: 'read',
+    description:
+      'View the general ledger (read-only query over posted journal lines)',
+  },
+  {
+    resource: 'trial_balance',
+    action: 'read',
+    description:
+      'View the trial balance (read-only query over posted journal lines)',
+  },
+  // Phase 21 — Notifications. Read + mark-as-read only — no
+  // notifications.create (every row is created exclusively by
+  // NotificationEventConsumer reacting to a Kafka event, never via the
+  // API) and no notifications.delete (no delete endpoint exists).
+  {
+    resource: 'notifications',
+    action: 'read',
+    description: 'View notifications',
+  },
+  {
+    resource: 'notifications',
+    action: 'update',
+    description: 'Mark a notification as read',
+  },
+  // Phase 22 — Reports/Dashboard. Every permission here backs a real
+  // read-only endpoint this phase actually builds (zero-dead-permission
+  // discipline, matching every prior phase). Trial Balance/General Ledger
+  // are Phase 17's own permissions (trial_balance.read/general_ledger.read)
+  // — not duplicated here, since this phase deliberately does not
+  // duplicate those routes.
+  {
+    resource: 'reports',
+    action: 'dashboard.read',
+    description: 'View the reports dashboard summary',
+  },
+  {
+    resource: 'reports',
+    action: 'sales.read',
+    description: 'View sales reports (summary/by-date/by-customer/by-branch)',
+  },
+  {
+    resource: 'reports',
+    action: 'purchases.read',
+    description: 'View purchase reports (summary/by-date/by-supplier)',
+  },
+  {
+    resource: 'reports',
+    action: 'payments.read',
+    description: 'View payment reports (by-date/by-direction/by-method)',
+  },
+  {
+    resource: 'reports',
+    action: 'inventory.read',
+    description: 'View inventory reports (stock summary/movements)',
+  },
+  {
+    resource: 'reports',
+    action: 'balance_sheet.read',
+    description: 'View the balance sheet report',
+  },
+  {
+    resource: 'reports',
+    action: 'profit_loss.read',
+    description: 'View the profit & loss report',
+  },
+  {
+    resource: 'reports',
+    action: 'ar_ap.read',
+    description: 'View the AR/AP aging report',
+  },
 ];
 
 /**
@@ -474,6 +681,28 @@ const SUPER_ADMIN_ALL_SCOPE_RESOURCES: readonly string[] = [
   // Phase 12 — Sales
   'sales',
   'sale_items',
+  // Phase 13 — Purchase
+  'purchase_orders',
+  'purchase_order_items',
+  // Phase 14 — Inventory
+  'warehouse_stock',
+  'goods_receipts',
+  'stock_transfers',
+  'stock_adjustments',
+  // Phase 15 — Inventory Ledger
+  'inventory_ledger',
+  // Phase 16 — Payment
+  'payments',
+  'payment_methods',
+  // Phase 17 — Accounting / General Ledger
+  'accounts',
+  'journal_entries',
+  'general_ledger',
+  'trial_balance',
+  // Phase 21 — Notifications
+  'notifications',
+  // Phase 22 — Reports/Dashboard
+  'reports',
 ];
 
 async function seed(): Promise<void> {

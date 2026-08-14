@@ -999,12 +999,33 @@ describeIfDb('Customer / Supplier (Phase 11) (e2e)', () => {
   });
 
   describe('no GL Account table / no SalesAccount assignment created in this phase', () => {
-    it('confirms accounts / sales_account_assignments-style tables for Phase 11 do not exist', async () => {
+    /**
+     * Updated for Phase 17 (Accounting / General Ledger): `accounts` is now
+     * a real, legitimate table (Phase 17's Chart of Accounts, D4) —
+     * `Customer.receivableAccountId`/`Supplier.payableAccountId` finally
+     * have a real FK target to point at, per this Phase 11 file's own
+     * "Accounting Mapping Placeholders" section anticipating exactly this.
+     * `gl_accounts`/`chart_of_accounts` (the two speculative alternate
+     * names this test originally guarded against) and
+     * `customer_sales_account_assignments` (a Customer-side permanent
+     * SalesAccount assignment table, explicitly never built by any phase —
+     * see this file's "SalesAccount / DataScope.ACCOUNT Deferral" section)
+     * still correctly do not exist. This is a narrow, direct update to a
+     * single stale assertion whose premise Phase 17 legitimately changed —
+     * not a re-opening of any other Phase 11 boundary.
+     */
+    it('confirms gl_accounts/chart_of_accounts/customer_sales_account_assignments do not exist (accounts now exists — Phase 17)', async () => {
       const tables: Array<{ TABLE_NAME: string }> = await dataSource.query(
-        `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('gl_accounts', 'accounts', 'chart_of_accounts', 'customer_sales_account_assignments')`,
+        `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('gl_accounts', 'chart_of_accounts', 'customer_sales_account_assignments')`,
       );
 
       expect(tables.length).toBe(0);
+
+      const accountsTable: Array<{ TABLE_NAME: string }> =
+        await dataSource.query(
+          `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'accounts'`,
+        );
+      expect(accountsTable.length).toBe(1);
     });
   });
 });

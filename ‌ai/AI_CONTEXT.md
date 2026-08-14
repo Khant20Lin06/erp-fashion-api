@@ -13,7 +13,12 @@ The full phase specifications live in this same `‌ai/` folder (`PHASE 00.md`,
 
 ## Current Phase
 
-**Phase 12 — Sales**
+Authoritative update as of Friday, August 14, 2026: the repository has
+already reached **Phase 22 - Reports / Dashboard**, and that phase is
+completed. The older phase label and the history appendix below have not yet
+been fully expanded through Phases 18-22.
+
+**Phase 17 — Accounting / General Ledger**
 
 Status: **Completed**
 
@@ -1211,6 +1216,218 @@ Status: Completed.
   (extending, not replacing, `rbac.seed.ts`/`typeorm.options.ts`/
   `app.module.ts`).
 
+### Phase 13 — Purchase (Purchase Order only)
+
+Status: Completed.
+
+- **Boundary**: exactly three entities — `PurchaseOrder`,
+  `PurchaseOrderItem`, `CompanyPurchaseCounter` — in a new
+  `src/modules/purchase/` module. No Goods Receipt/Purchase Request/
+  Supplier Invoice/Purchase Return/Inventory/Stock/Payment-entity/
+  Accounting/Tax-entity/Currency-entity/Unit-entity/AuditLog/Approval-
+  workflow/RFQ/Promotion code anywhere in the module (grep-verified — the
+  only matches were doc-comments explicitly stating these do NOT exist).
+  Phase 13 owns PurchaseOrder only; Goods Receipt is explicitly deferred
+  to Phase 14 (Decision #3, LOCKED) and buyer/requester attribution is
+  explicitly omitted (Decision #9, LOCKED) — see
+  `docs/PURCHASE_ARCHITECTURE.md` §21/§24.
+- **PurchaseOrder/PurchaseOrderItem model**: `PurchaseOrder` is the header
+  (`companyId`/`branchId`/`warehouseId`/`supplierId`/`paymentTermId`, all
+  RESTRICT FKs, `branchId`/`warehouseId`/`paymentTermId` nullable),
+  `PurchaseOrderItem` is the line (`purchaseOrderId` CASCADE,
+  `productVariantId` RESTRICT, no independent soft delete — mirrors
+  `SaleItem` exactly). Money columns use `DECIMAL(14,2)`, matching Sale's
+  own Phase 12 precision. `PurchaseType` is a minimal, defensible enum
+  (`STANDARD|CREDIT`) — `CREDIT` reflects `Supplier.creditDays` (Phase
+  11), a real, already-modeled business distinction, not a speculative
+  channel split like Sale's POS/RETAIL/WHOLESALE (Purchase has no
+  equivalent channel concept). **No `purchaserId`/`buyerId`/`requesterId`
+  field, no SalesAccount-equivalent relationship** — Decision #9, LOCKED;
+  `PurchaseModule` does not import `SalesAccountsModule` at all.
+- **Purchase-order numbering — concurrency-safe via a locked counter
+  table, reusing Phase 12's exact pattern**: a dedicated
+  `CompanyPurchaseCounter` entity/table (`UNIQUE(company_id, year)`),
+  never `SELECT MAX(purchase_order_number) + 1`. Inside the same
+  transaction as PurchaseOrder/PurchaseOrderItem creation, the counter
+  row is guaranteed to exist via the same idempotent
+  `INSERT ... ON DUPLICATE KEY UPDATE` upsert, then locked with
+  `SELECT ... FOR UPDATE`, incremented, and formatted as
+  `PO-<year>-<6-digit sequence>`. Proven correct with a real 10-way
+  parallel `POST /purchase-orders` e2e test — all resulting purchase
+  order numbers unique, zero unexpected failures.
+- **Cost snapshot — client-supplied, never server-resolved**: unlike
+  Sale's PriceList-resolved `unitPriceSnapshot`, Purchase has no pricing
+  engine. `unitCostSnapshot` is the client-supplied, server-validated
+  (`>= 0`) negotiated cost for that specific order — `ProductVariant.costPrice`
+  is reference/default data only and is never read to populate it (per
+  `docs/PRODUCT_VARIANT_PRICING_ARCHITECTURE.md` §20's own locked
+  contract for this phase). `CreatePurchaseOrderDto`/
+  `CreatePurchaseOrderItemDto` have no `subtotal`/`grandTotal`/
+  `lineTotal` fields at all — submitting them is rejected outright by the
+  existing global `forbidNonWhitelisted` `ValidationPipe` (400). Every
+  `PurchaseOrder` financial total is summed server-side from the
+  resolved, validated per-line `unitCost`/`discountAmount`/`taxAmount`
+  values.
+- **Supplier integration**: reuses `SuppliersService.findByIdInCompany()`
+  (Phase 11) verbatim — cross-company/nonexistent `supplierId` is 404,
+  matching the established IDOR-hiding convention. A `BLOCKED` supplier
+  is rejected (400) at PurchaseOrder creation, the direct Purchase-side
+  analogue of Sale's `BLOCKED` Customer rejection.
+- **PaymentTerm integration**: reuses
+  `PaymentTermsService.findByIdInCompany()` (Phase 11) verbatim —
+  cross-company/nonexistent `paymentTermId` is 404 (same IDOR-hiding
+  convention as Supplier/ProductVariant), inactive is 400. `PaymentTerm`
+  is the same shared entity Phase 11 built for both Customer and
+  Supplier — not duplicated or extended here.
+- **ProductVariant integration**: reuses
+  `ProductVariantsService.findByIdInCompany()` (Phase 10) verbatim for
+  every line — never a `productId`+color+size tuple, the same identity
+  contract `SaleItem` uses.
+- **Organization scope**: `companyId` required via the unmodified
+  `resolveRequestCompanyId()` helper (Phase 09). `branchId`/`warehouseId`
+  optional; when supplied, validated against the resolved company (and,
+  when both are present, `warehouse.branchId === branchId`) — mirrors
+  the exact Warehouse cross-company/cross-branch spoofing rejection
+  Sale/Phase 07/08 already established, reused rather than re-derived.
+- **Lifecycle**: `DRAFT`/`CONFIRMED`/`CANCELLED` only — an exact mirror
+  of Sale's lifecycle, no `PENDING_APPROVAL`/`PARTIALLY_RECEIVED`/
+  `RECEIVED`/`CLOSED`. Valid transitions: `DRAFT → CONFIRMED`,
+  `DRAFT → CANCELLED` only; every other transition (including any
+  re-confirm/re-cancel, and any CANCELLED→anything) is rejected 409. Two
+  dedicated endpoints only (`POST /purchase-orders/:id/confirm`,
+  `POST /purchase-orders/:id/cancel`) — **no generic
+  `PATCH /purchase-orders/:id` endpoint exists at all**. Confirmed
+  purchase orders are therefore immutable by construction.
+- **Tax boundary — explicit, honest limitation**: no `Tax` entity, no
+  tax module, no hardcoded rate. `PurchaseOrderItem.taxSnapshot` is a
+  server-validated non-negative pass-through value only — no
+  rate-lookup/jurisdiction logic exists anywhere, identical in spirit to
+  Sale's own tax boundary.
+- **Goods Receipt — explicit deferral to Phase 14, not silently
+  skipped**: no `GoodsReceipt`/`GoodsReceiptItem` entity, receiving
+  quantity, rejected quantity, remaining-quantity tracking, partial
+  receiving, over-receiving validation, receiving concurrency lock, or
+  any stock/inventory mutation exists anywhere (Decision #3, LOCKED).
+- **Buyer/requester attribution — explicit omission, not an
+  inconsistency with Sale's SalesAccount model**: no
+  `purchaserId`/`buyerId`/`requesterId` field, no PurchaseAccount/
+  SalesAccount-equivalent relationship, no `BuyerAssignment` table, no
+  `ACCOUNT` DataScope resolution for Purchase (Decision #9, LOCKED).
+  `PurchaseOrdersService` never calls `SalesAccountAccessService`.
+- **Inventory/Payment/Accounting boundaries**: all three are explicit,
+  inert integration points, not implemented logic.
+  `PurchaseOrder.warehouseId` is scope-only (no stock-increase logic
+  exists — that is Phase 14's job).
+  `PurchaseOrder.paidAmount`/`balanceAmount` are initialize-only fields
+  (`0.00` and `= grandTotal` respectively at creation) never written to
+  again by this phase — Phase 16's integration surface.
+  `Supplier.payableAccountId` (Phase 11) remains untouched — Phase 17's
+  integration surface, alongside `PurchaseOrder.grandTotal` itself.
+- **RBAC integration (reused, not duplicated; no dead permissions)**: 5
+  new permissions (`purchase_orders.read/create/confirm/cancel`,
+  `purchase_order_items.read` — plural, matching every prior phase's
+  `resource.action` convention) added to the existing idempotent seed,
+  granted to SUPER_ADMIN, plus the now-standard `RoleResourceScope`
+  ALL-scope grant for both new resources. Deliberately **no
+  `.update`/`.delete`/`.approve`/`.reject` permissions** — unlike Phase
+  12's reserved-for-future `sales.update`/`sales.delete`, every Phase 13
+  permission has a real, working endpoint behind it; this closes the
+  exact "dead permission" gap the Phase 13 task explicitly called out.
+  Verified live via the seed script's own console output (5 permissions
+  created, 5 grants to SUPER_ADMIN, 2 ALL-scope `RoleResourceScope` rows
+  created).
+- **APIs**: `GET /purchase-orders`, `GET /purchase-orders/:id`,
+  `POST /purchase-orders`, `POST /purchase-orders/:id/confirm`,
+  `POST /purchase-orders/:id/cancel`. No PATCH, no DELETE. Full list and
+  every locked-decision rationale in `docs/PURCHASE_ARCHITECTURE.md`.
+- **Migration**: `1786560000000-CreatePurchaseTables.ts` — three tables
+  (`company_purchase_counters` created first, then `purchase_orders`,
+  then `purchase_order_items`, respecting FK dependency order). Verified
+  UP→DOWN→UP against real Dockerized MySQL with actual
+  `SHOW CREATE TABLE` schema inspection for all three tables (correct
+  FKs — RESTRICT everywhere on `purchase_orders`' organizational/
+  supplier/payment-term/user references, CASCADE only on
+  `purchase_order_items.purchase_order_id`, RESTRICT on
+  `purchase_order_items.product_variant_id`, RESTRICT on
+  `company_purchase_counters.company_id`; correct unique indexes
+  `(company_id, purchase_order_number)` and `(company_id, year)`; correct
+  secondary indexes; InnoDB/utf8mb4/utf8mb4_unicode_ci). All pre-existing
+  Phase 01-12 tables (36 tables) confirmed present and untouched after
+  the DOWN migration, and confirmed restored after the second UP. No
+  migration bugs found this phase — no composite index in this schema
+  approached MySQL's 3072-byte utf8mb4 key-length limit (checked
+  proactively per the Phase 10 lesson).
+- **Transactions**: `TransactionService.run()` wraps the entire
+  `PurchaseOrdersService.create()` flow (counter locking/incrementing,
+  per-item cost/discount/tax validation, PurchaseOrder + all
+  PurchaseOrderItem row creation) — every `manager.create()`/
+  `manager.save()` call inside the callback uses the transactional
+  `EntityManager`, never an injected Repository. Proven with a dedicated
+  rollback e2e test (one valid item + one invalid `productVariantId` →
+  404, zero `purchase_orders`/`purchase_order_items` rows exist
+  afterward) and the purchase-order-number concurrency test described
+  above.
+- **Tests**: 20 new unit tests (`PurchaseOrdersService` — including the
+  full lifecycle-transition matrix, negative-cost rejection,
+  discount-exceeds-subtotal rejection, blocked-supplier rejection,
+  cross-company-supplier-404, PaymentTerm active/inactive/cross-company
+  validation, and purchase-order-number formatting) + 38 new e2e tests
+  (`test/purchase-orders.e2e-spec.ts` — auth/permission boundaries,
+  single and multi-item creation, real purchase-order-number uniqueness
+  including a 10-way parallel concurrency test, unknown-field rejection,
+  client-submitted-subtotal/lineTotal rejection, cross-company supplier/
+  ProductVariant/PaymentTerm rejection, invalid branch/warehouse/
+  currency/quantity/cost rejection, BLOCKED supplier rejection, every
+  lifecycle transition both valid and invalid, confirmed-purchase-order
+  immutability, no-generic-PATCH-exists, and the
+  transactional-rollback-on-partial-failure proof). All pre-existing
+  unit tests continue passing (335 passed, 7 DB-gated skips, 342 total
+  across 45 passed + 2 skipped suites). The full 11-suite e2e regression
+  (all of Phase 05-13's suites, run in two batches to avoid the
+  documented exit-127 flakiness) passed cleanly: batch 1 (app/auth/
+  organization/master-data/products/rbac) 119/119 tests, batch 2
+  (customer-supplier/user-employee-account/validation/sales/
+  purchase-orders) 140/140 tests — 259 e2e tests total, zero failures.
+- Security review performed and verified live through the running
+  Docker container: unauthenticated → 401, authenticated-without-
+  permission → 403, cross-company supplier/branch/warehouse/
+  paymentTerm/productVariant → 404 or 400 per the established
+  convention, invalid lifecycle transition → 409, client-submitted
+  subtotal/grandTotal/lineTotal → 400 (rejected outright by
+  `forbidNonWhitelisted`, never silently accepted-then-ignored),
+  unknown/extra fields → 400, no generic PATCH exists to bypass the
+  confirm/cancel-only lifecycle. Two test-authoring bugs were found and
+  fixed during verification (not implementation bugs): the e2e helper for
+  blocking a Supplier was missing the required `?companyId=` query
+  param (silently no-op'd under SUPER_ADMIN's ALL scope, masking the
+  BLOCKED-rejection assertion), and a cross-company PaymentTerm test
+  initially asserted 400 instead of the actually-correct 404 (matching
+  `PaymentTermsService.findByIdInCompany()`'s existing IDOR-hiding
+  convention) — both fixed in the test file itself, not the
+  implementation, after confirming which side was wrong.
+- `docs/PURCHASE_ARCHITECTURE.md` documents the full architecture,
+  including explicit, honest boundary statements for tax (no engine),
+  Goods Receipt/Purchase Request/Supplier Invoice/Purchase Return
+  (deferred/not built), buyer/requester attribution (omitted, Decision
+  #9), inventory/payment/accounting (inert integration points only), and
+  the Phase 14/15/16/17 integration-point list.
+- Verified: zero real implementation of Inventory/Stock/StockMovement,
+  Payment entity/ledger, JournalEntry/Ledger/GLAccount, a `Tax` entity, a
+  `Currency` entity, a `Unit`/UOM entity, AuditLog infrastructure,
+  Approval workflow tables/services, GoodsReceipt, PurchaseReturn,
+  SupplierInvoice, PurchaseRequest, ExchangeRate, SalesAccount, or any
+  Buyer/Purchaser/Requester field anywhere in `src/modules/purchase`
+  (grepped — the only matches were doc-comments explicitly stating these
+  do NOT exist, never real code). Zero frontend files touched. No new
+  npm dependencies were added (Phase 13 reused Phase 03/04/06/07/08/09/
+  10/11/12's TypeORM/validation/transaction/RBAC/organization/
+  customer-supplier/products infrastructure entirely).
+- **Not committed**: per explicit instruction, this phase's work remains
+  uncommitted in the working tree — no `git commit`, no `git push`.
+  Phase 09-12's own still-uncommitted changes were left exactly as they
+  were, untouched beyond what Phase 13 needed to add (extending, not
+  replacing, `rbac.seed.ts`/`typeorm.options.ts`/`app.module.ts`).
+
 Known/accepted gaps carried forward:
 
 - No tax rate engine — see `docs/SALES_ARCHITECTURE.md` "Tax Boundary".
@@ -1232,6 +1449,331 @@ Known/accepted gaps carried forward:
   phase's scope — flagged honestly rather than silently ignored.
 - No dashboard/summary/aggregate endpoints — deferred to a future
   Reports/Dashboard phase.
+- No Bruno API collection — consistent with every prior phase.
+- `@nestjs/swagger`'s transitive `js-yaml` advisory (unchanged since
+  Phase 01, dev-time only).
+- No Goods Receipt / receiving logic of any kind — Phase 14's integration
+  point (Decision #3, LOCKED), see `docs/PURCHASE_ARCHITECTURE.md` §21.
+- No Purchase Request, Supplier Invoice, or Purchase Return entity —
+  explicitly not built in Phase 13, see `docs/PURCHASE_ARCHITECTURE.md`
+  §22/§23/§25.
+- No buyer/requester/purchaser attribution model for PurchaseOrder
+  (Decision #9, LOCKED) — Purchase is deliberately independent of
+  SalesAccount; a future phase would need to make a fresh, explicit
+  decision if this is ever wanted, not silently inherit Sale's model.
+- No generic update endpoint for PurchaseOrder — a DRAFT purchase order
+  can only be recreated, not edited in place. Unlike Sale, no
+  `purchase_orders.update`/`.delete` permission was even seeded (no dead
+  permission exists in the catalog for this resource).
+- No idempotency-key mechanism on `POST /purchase-orders` — the same
+  honest gap Sale has; a genuinely retried request creates a second,
+  separately-numbered PurchaseOrder rather than being deduplicated.
+
+### Phase 14 — Inventory
+
+Status: Completed.
+
+- **Boundary**: exactly eight entities across three counter tables —
+  `WarehouseStock`, `StockMovement`, `GoodsReceipt`/`GoodsReceiptItem`,
+  `StockTransfer`/`StockTransferItem`, `StockAdjustment`, plus
+  `CompanyGoodsReceiptCounter`/`CompanyStockTransferCounter`/
+  `CompanyStockAdjustmentCounter` — in a new `src/modules/inventory/`
+  module. No queryable Inventory Ledger API (Phase 15), no valuation/
+  FIFO/weighted-average/COGS/accounting postings, no batch/lot/serial/
+  expiry tracking, no UOM/fractional quantity, no reservation workflow
+  (schema-forward-compat `reservedQuantity` column only, always 0), no
+  reorder points, no approval workflow engine, no Purchase/Sales Return,
+  no Redis/BullMQ/events (grep-verified — the only matches were
+  doc-comments explicitly stating these do NOT exist, never real code).
+- **WarehouseStock**: the current balance for one `(warehouseId,
+  productVariantId)` pair — `UNIQUE(warehouse_id, product_variant_id)`,
+  the stock-identity contract `docs/PRODUCT_VARIANT_PRICING_ARCHITECTURE.md`
+  §21 anticipated. Not a lifecycle entity (no `BaseEntity`, no
+  soft-delete); a row is created lazily via an idempotent upsert on first
+  touch, never through its own endpoint. `onHandQuantity` is the sole
+  authoritative count, enforced `>= 0` at the transaction layer (never a
+  DB `CHECK` alone). `reservedQuantity` is schema-forward-compat only —
+  nothing anywhere writes a non-zero value. `availableQuantity` is
+  computed only in the response DTO, never persisted. No cost/value
+  column exists (Phase 17's concern).
+- **StockMovement — the Phase 14/15 boundary**: append-only internal log,
+  **no update/delete/soft-delete and deliberately no public list/query
+  endpoint** in this phase — written internally by GoodsReceipt/
+  Sale-confirm/StockTransfer/StockAdjustment only.
+  `movementType ∈ {PURCHASE_RECEIPT, SALE_ISSUE, TRANSFER_IN,
+  TRANSFER_OUT, ADJUSTMENT, OPENING_BALANCE}`; `quantityAfter` is a
+  denormalized point-in-time snapshot; `referenceType`/`referenceId` form
+  a polymorphic pointer with **no FK constraint** (points to a different
+  table depending on `referenceType`). Explicit statement: **Phase 14
+  writes `stock_movements`, Phase 15 (Inventory Ledger) is the phase that
+  ever queries/reports on it.**
+- **GoodsReceipt design**: **no `status` column, no lifecycle** — a row
+  existing IS the completed receipt; no update/delete endpoint.
+  `GoodsReceiptItem.productVariantId` is denormalized but always
+  server-validated to match the referenced `PurchaseOrderItem`'s own
+  variant (400 if mismatched). Remaining-ordered-quantity is always
+  computed server-side (`purchaseOrderItem.quantity - SUM(prior
+  GoodsReceiptItem.receivedQuantity)`), never stored as a mutable column;
+  over-receiving is **409 Conflict** (business-rule-violation
+  convention, not 400). `unitCostSnapshot` was deliberately **omitted**
+  from `GoodsReceiptItem` — the locked spec said "MAY preserve," not
+  "MUST," and omitting it avoids any risk of being read as valuation
+  logic.
+- **Purchase integration**: receiving requires the PurchaseOrder to be
+  `CONFIRMED` (`DRAFT`/`CANCELLED` → 409). One `TransactionService.run()`
+  call: lock the `PurchaseOrderItem` row(s) with `SELECT ... FOR UPDATE`
+  (sorted by id for deterministic cross-request ordering) → lock
+  (upsert-then-lock) the `WarehouseStock` row(s) → validate remaining →
+  increase stock → write `StockMovement(PURCHASE_RECEIPT)` → create the
+  `GoodsReceipt`/`GoodsReceiptItem` rows. **Additive change to
+  `PurchaseOrdersService.cancel()`** (Phase 13, otherwise untouched): now
+  rejects (409) cancelling a PurchaseOrder that already has any
+  `GoodsReceipt` recorded against it, checked before the existing
+  transition-table check.
+- **Sales integration — the cross-phase-boundary change (D5)**:
+  `SalesService.confirm()` (Phase 12) was `status flip + updatedBy +
+  save`; it is now wrapped in `TransactionService.run()` and, before
+  flipping status, locks the relevant `WarehouseStock` rows in
+  deterministic (`productVariantId`) order, validates sufficient
+  `onHandQuantity` for **every** item (any single insufficient item rolls
+  back the *entire* confirmation — no partial deduction, Sale stays
+  `DRAFT`, 409), decreases stock, and writes one
+  `StockMovement(SALE_ISSUE)` row per item. Only after all stock
+  mutations succeed does status flip to `CONFIRMED`. **Discovered edge
+  case, resolved conservatively**: `Sale.warehouseId` is nullable
+  (Phase 12's own design) — since the locked spec unconditionally
+  requires stock deduction on confirm with no null-warehouse carve-out, a
+  Sale with no `warehouseId` can no longer be confirmed at all (400
+  Validation Error). This is an additive tightening of Sale's own
+  `confirm()` contract, not a new architectural conflict. The existing
+  Phase 12 tests that previously confirmed a warehouse-less Sale were
+  updated to supply one — the only change made to Phase 12's own test
+  expectations; `create()`, `cancel()`, `findAll()`, and every DTO are
+  untouched.
+- **StockTransfer**: single-step atomic (creation is the whole
+  lifecycle, no update/delete endpoint). Rules: source ≠ destination
+  (400), both warehouses ACTIVE and in the resolved company (400),
+  source must have sufficient stock (409), destination `WarehouseStock`
+  row created via the same upsert pattern if it doesn't exist yet.
+  **Deterministic multi-warehouse lock ordering**: all required
+  `WarehouseStock` rows (source + destination, every item) are collected
+  and sorted by the `(warehouseId, productVariantId)` tuple *before any
+  lock is acquired* — the specific mechanism preventing the classic
+  two-transaction deadlock where concurrent transfers lock the same
+  warehouse pair in opposite orders.
+- **StockAdjustment**: **single-line flat model** —
+  `warehouseId`/`productVariantId`/`quantityChange` live directly on the
+  entity, no `StockAdjustmentItem` (the locked spec's §3 high-level list
+  mentioned one, but §9's concrete field list is flat and more specific;
+  the more literal reading was followed, flagged explicitly as the one
+  place the spec's two sections disagreed on an entity's shape). Creation
+  immediately mutates stock — no approval workflow. `quantityChange > 0`
+  unrestricted; `quantityChange < 0` enforces strict no-negative-stock
+  inside the row lock (409); `quantityChange === 0` rejected (400).
+  Opening stock = `StockAdjustment` with `reason = OPENING_BALANCE`, not
+  a separate entity. Reason catalog:
+  `OPENING_BALANCE|DAMAGE|LOSS|FOUND|CORRECTION`. Movement type written
+  is `OPENING_BALANCE` specifically when `reason === OPENING_BALANCE`,
+  `ADJUSTMENT` otherwise.
+- **Concurrency strategy**: pessimistic `SELECT ... FOR UPDATE` via
+  `setLock('pessimistic_write')` inside `TransactionService.run()` only —
+  the exact `SalesService.generateSaleNumber()`/`PurchaseOrdersService`
+  counter-locking pattern (Phase 12/13), applied to `WarehouseStock`
+  balance rows and `PurchaseOrderItem` rows. Shared upsert-then-lock
+  helper (`lockWarehouseStockRow`/`lockWarehouseStockRows`,
+  `src/modules/inventory/utils/stock-lock.ts`) used by all four write
+  paths — one implementation, not four copies.
+- **Three real concurrency bugs found and fixed during e2e verification**
+  (full story in `docs/INVENTORY_ARCHITECTURE.md` §18 — this is the kind
+  of thing unit-test mocks cannot catch, which is exactly why the locked
+  spec required live, unmocked concurrency tests):
+  1. *Disproven hypothesis*: suspected MySQL `UUID()` collision under
+     10-way parallel `INSERT ... ON DUPLICATE KEY UPDATE` — switched to
+     `crypto.randomUUID()` for candidate primary keys (kept as good
+     practice), but the identical failure persisted, disproving this.
+  2. *Real bug*: `manager.save()` on an entity hydrated via
+     `createQueryBuilder().setLock('pessimistic_write').getOneOrFail()`
+     was found to sometimes issue a fresh duplicate INSERT instead of an
+     UPDATE against that already-existing, already-locked row — the
+     actual cause of the "Duplicate entry" errors. Fixed by replacing
+     every such `manager.save()` call with the unambiguous
+     `manager.update(Entity, lockedRow.id, { ...changedFields })` across
+     all three Phase 14 counter-generation methods, every
+     `WarehouseStock` mutation reached via the lock helper (in
+     `GoodsReceiptsService`, `StockAdjustmentsService`,
+     `StockTransfersService`, and `SalesService.confirm()`). This same
+     structural pattern exists unmodified in Phase 12/13's own
+     `generateSaleNumber()`/`generatePurchaseOrderNumber()` — flagged as
+     a latent, currently-dormant risk there (their own concurrency tests
+     pass reliably in practice) rather than silently patched, since
+     touching that code was outside this phase's "minimal and additive"
+     mandate for Phase 12/13.
+  3. *Real bug*: the GoodsReceipt remaining-quantity SUM query was a
+     plain (non-locking) `SELECT`, which under MySQL's default
+     `REPEATABLE READ` isolation reads from the transaction's own
+     consistent snapshot even when it runs after acquiring an unrelated
+     row's lock — under-counting concurrently-committed prior receipts
+     from other transactions and allowing over-receiving. Fixed by
+     adding `.setLock('pessimistic_read')` to force a fresh,
+     latest-committed read.
+  A dedicated `retryOnDuplicateEntry()` bounded-retry helper
+  (`src/modules/inventory/utils/upsert-retry.ts`) was added during the
+  investigation as a legitimate defensive measure for the real (if rare)
+  InnoDB gap-lock `ER_DUP_ENTRY` behavior under highly concurrent
+  first-ever-insert contention — it remains in place but was not itself
+  the fix for either real bug above.
+- **Strict no-negative-stock (D7)**: every stock-decreasing operation
+  (Sale issue, Transfer out, negative Adjustment) validates sufficient
+  quantity *inside* the row lock, *inside* the transaction, *before*
+  writing the decrease — never `SELECT`-then-check-then-`UPDATE` without
+  holding the lock across the whole sequence. No configurable override.
+- **RBAC integration (reused, not duplicated; no dead permissions)**:
+  exactly 7 new permissions
+  (`warehouse_stock.read`, `goods_receipts.read/create`,
+  `stock_transfers.read/create`, `stock_adjustments.read/create`) — no
+  more, no less, matching the locked spec precisely. Deliberately
+  **zero `.update`/`.delete`/`.approve`/`.cancel`** — every seeded
+  permission has a real, working endpoint, continuing Phase 13's
+  zero-dead-permission precedent. All 7 granted to SUPER_ADMIN, all 4
+  resources (`warehouse_stock`, `goods_receipts`, `stock_transfers`,
+  `stock_adjustments`) received the standard `RoleResourceScope`
+  ALL-scope grant. Verified live via the seed script's own console
+  output (7 permissions created, 7 grants, 4 ALL-scope rows) and
+  confirmed idempotent on re-run (zero output) after the full migration
+  DOWN→UP cycle.
+- **DataScope**: `DataScopeService`/`resolveRequestCompanyId()` reused
+  completely unmodified — no new scope kind. `WarehouseStock` has no
+  `companyId` column of its own; company scoping for `GET
+  /warehouse-stock` is resolved by joining through `warehouse.companyId`
+  in `WarehouseStockService`, the same "derive scope through the
+  entity's real parent" approach Warehouse itself established for
+  Branch back in Phase 07.
+- **APIs**: `GET/GET-by-id /warehouse-stock`, `GET/GET-by-id/POST
+  /goods-receipts`, `GET/GET-by-id/POST /stock-transfers`,
+  `GET/GET-by-id/POST /stock-adjustments` — 11 routes total, no
+  PATCH/DELETE anywhere (proven by a dedicated e2e test asserting
+  404/405 on every resource). Full list and every locked-decision
+  rationale in `docs/INVENTORY_ARCHITECTURE.md`.
+- **Migration**: `1786570000000-CreateInventoryTables.ts` — ten tables
+  in dependency order (`company_goods_receipt_counters` →
+  `warehouse_stock` → `stock_movements` → `goods_receipts` →
+  `goods_receipt_items` → `company_stock_transfer_counters` →
+  `stock_transfers` → `stock_transfer_items` →
+  `company_stock_adjustment_counters` → `stock_adjustments`).
+  **A real migration bug was found and fixed during UP verification**:
+  the first attempt named `stock_adjustments`' foreign keys with an
+  `FK_sa_*` prefix, which collided with **two** already-existing
+  constraint names in the live database — `sales_accounts.FK_sa_company`
+  (Phase 08) and `supplier_addresses.FK_sa_supplier` (Phase 11) — since
+  MySQL FK constraint names are unique per-**database**, not per-table
+  (unlike index names). Fixed by renaming to the collision-free
+  `FK_stkadj_*` prefix, verified against `information_schema.
+  TABLE_CONSTRAINTS` directly. Verified UP→DOWN→UP against real
+  Dockerized MySQL with actual `SHOW CREATE TABLE` output for all ten
+  new tables (correct FKs, correct unique/secondary indexes, InnoDB/
+  utf8mb4/utf8mb4_unicode_ci, no soft-delete columns anywhere) — and,
+  critically, all pre-existing tables including Phase 13's own
+  still-uncommitted `purchase_orders`/`purchase_order_items`/
+  `company_purchase_counters` confirmed byte-identical (`SHOW CREATE
+  TABLE` re-inspected) before and after the DOWN/UP cycle, with the
+  full table count returning to exactly 46 (36 pre-existing + 10 new)
+  after the second UP.
+- **Tests**: 37 new unit tests across 4 spec files
+  (`GoodsReceiptsService`, `StockTransfersService`,
+  `StockAdjustmentsService`, `WarehouseStockService`) + 1 new
+  `PurchaseOrdersService` unit test (cancel-blocked-by-goods-receipt) +
+  4 new `SalesService` unit tests (D5 stock-issue behavior) + 30 new
+  e2e tests (`test/inventory.e2e-spec.ts` — GoodsReceipt against
+  DRAFT/CANCELLED/CONFIRMED POs, partial receiving, over-receiving
+  rejection, exact-final-receipt, cross-company/inactive rejections,
+  the goods-receipt-blocks-cancel proof, **two real concurrency tests**
+  with `Promise.all()` against live Docker MySQL — one exactly-fits
+  10-way parallel receive proving no lost updates, one deliberately
+  over-subscribed proving exactly the mathematically-correct number
+  succeed/fail — StockTransfer success/insufficient/same-warehouse/
+  cross-company/inactive rejections plus a **real concurrency test**
+  proving deterministic lock ordering prevents deadlock across 10
+  concurrent bidirectional transfers, StockAdjustment positive/negative/
+  below-zero/zero-rejected/opening-balance-movement-type, and a
+  no-PATCH/DELETE-anywhere proof) + 5 new/modified e2e tests in
+  `test/sales.e2e-spec.ts` (D5 stock deduction, insufficient-stock 409
+  leaving Sale in DRAFT, null-warehouseId 400, multi-item atomic
+  rollback, confirmed-sale stock verification). All pre-existing tests
+  continue passing: **383 unit tests (376 passed + 7 DB-gated skips)**;
+  full 12-suite e2e regression run in two batches (the same
+  Phase-12/13-documented convention) — batch 1 (app/auth/organization/
+  master-data/products/rbac) 119/119, batch 2 (customer-supplier/
+  user-employee-account/validation/sales/purchase-orders/inventory)
+  173/173 — **292 e2e tests total, zero failures**, run fresh against
+  the post-migration-cycle schema.
+- **Test-authoring bugs found and fixed during this phase's own e2e
+  verification** (not implementation bugs): (1) `sales.e2e-spec.ts`'s
+  `beforeAll`/`afterAll` cleanup did not account for the four new
+  Phase-14 tables (`stock_movements`/`warehouse_stock`/
+  `stock_adjustments`/`goods_receipt_items`/`stock_transfer_items`, plus
+  the three counter tables) now holding RESTRICT FKs into
+  `product_variants`/`warehouses`/`companies` — fixed by adding
+  properly-ordered cleanup queries (children before parents, the same
+  Phase-09-established convention) in both blocks. (2) One new e2e test
+  (`a multi-item sale confirmation is atomic`) created a second company
+  price list on top of `setupBaseFixture`'s own one, silently triggering
+  Sale's pre-existing "ambiguous price list" 400 rejection instead of
+  the intended 409 insufficient-stock path — fixed by reusing the
+  fixture's own price list. (3) The documented "transient shell/PATH
+  exit-127" flakiness (first seen Phase 11, recurring every phase since)
+  recurred once on this phase's own e2e batch-2 run with zero output —
+  an immediate identical re-run succeeded cleanly (173/173), consistent
+  with every prior phase's experience.
+- `docs/INVENTORY_ARCHITECTURE.md` documents the full architecture,
+  including the D5 cross-phase-boundary rationale in full, the
+  Phase 14/15 `StockMovement` boundary statement, the concurrency
+  strategy, the strict no-negative-stock policy, and an explicit, honest
+  "Deferred / Not Built" list (reservation workflow, batch/lot/serial/
+  expiry, UOM, valuation/FIFO/COGS, Inventory Ledger query API, reorder
+  points, approval workflow, Purchase/Sales Return, Redis/BullMQ/events).
+- Verified: zero real implementation of Ledger-as-a-query-API, FIFO,
+  WeightedAverage, COGS, JournalEntry, GLAccount, ChartOfAccounts,
+  Batch, Lot, Serial, Expiry, UOM/UnitConversion, Reservation-as-a-
+  real-service, PurchaseReturn, SalesReturn, or Approval-as-a-workflow
+  anywhere in `src/modules/inventory` (grepped — the only matches were
+  doc-comments explicitly stating these do NOT exist, never real code).
+  Zero frontend files touched. No new npm dependencies were added
+  (Phase 14 reused Phase 03/04/06/07/09/10/11/12/13's TypeORM/
+  validation/transaction/RBAC/organization/products/purchase
+  infrastructure entirely).
+- **Not committed**: per explicit instruction, this phase's work remains
+  uncommitted in the working tree — no `git commit`, no `git push`.
+  Phase 09-13's own still-uncommitted changes were left exactly as they
+  were, untouched beyond what Phase 14 needed to add (extending, not
+  replacing, `rbac.seed.ts`/`typeorm.options.ts`/`app.module.ts`, and
+  the two explicitly-authorized additive changes to
+  `SalesService.confirm()` and `PurchaseOrdersService.cancel()`).
+
+Known/accepted gaps carried forward:
+
+- No queryable/reportable Inventory Ledger API — `StockMovement` is the
+  raw material; Phase 15 is the intended consumer.
+- No valuation/costing (FIFO/weighted-average/COGS/GL postings) — Phase
+  17's integration point. `GoodsReceiptItem` deliberately omits even an
+  optional cost-snapshot field to avoid any appearance of valuation
+  logic.
+- No batch/lot/serial/expiry tracking anywhere, not even placeholder
+  fields.
+- No UOM/fractional quantity — `int` throughout, Phase 10's lock stands.
+- No reservation workflow — `reservedQuantity` is schema-forward-compat
+  only, always 0.
+- No reorder points/low-stock alerts.
+- No approval workflow for GoodsReceipt/StockTransfer/StockAdjustment —
+  all three mutate stock immediately on creation, permission-gated only.
+- No Purchase Return / Sales Return entity or reverse-movement logic.
+- No Redis/BullMQ/events/messaging — every write is a synchronous
+  transactional DB operation.
+- A latent, currently-dormant `manager.save()`-on-a-locked-row risk
+  (Bug #2 above) exists unmodified in Phase 12/13's own
+  `generateSaleNumber()`/`generatePurchaseOrderNumber()` — flagged, not
+  fixed, since touching that code was outside this phase's scope. A
+  future phase touching that code should consider the same
+  `manager.update()` pattern.
 - No Bruno API collection — consistent with every prior phase.
 - `@nestjs/swagger`'s transitive `js-yaml` advisory (unchanged since
   Phase 01, dev-time only).
@@ -1391,3 +1933,791 @@ Known/accepted gaps carried forward:
   with empty output on the full single-invocation run, split the suite
   list into smaller batches via explicit file arguments rather than
   assuming a real test failure — check for actual jest output first.
+- Next phase: **Phase 14 — Inventory**. Phase 13's `PurchaseOrder`,
+  `PurchaseOrderItem`, and `CompanyPurchaseCounter` entities/services/
+  APIs are ready for Phase 14 to reference or mirror without any
+  redesign — see `docs/PURCHASE_ARCHITECTURE.md`'s §17/§21 ("Phase 14
+  Inventory integration point" / "Goods Receipt — explicitly deferred to
+  Phase 14") for the exact expected contract: `PurchaseOrderItem.productVariantId`
+  + `PurchaseOrderItem.quantity` + `PurchaseOrder.warehouseId` are the
+  exact fields a real Goods Receipt / stock-increase flow should consume
+  when receiving against a `CONFIRMED` PurchaseOrder — the direct
+  inbound-stock mirror of how `docs/SALES_ARCHITECTURE.md` §23 frames
+  `SaleItem.productVariantId` + `quantity` + `Sale.warehouseId` as the
+  outbound (stock-decrease) trigger for the same future Inventory phase.
+  No fake stock-check, receiving-quantity field, or `PARTIALLY_RECEIVED`/
+  `RECEIVED` status was added to `PurchaseOrder` in Phase 13 to simulate
+  this — Phase 14 owns introducing `GoodsReceipt`/`GoodsReceiptItem` and
+  any receiving-quantity/remaining-quantity tracking entirely from
+  scratch. Phase 14 also inherits Phase 13's own deferrals: no tax
+  engine, no audit log, no approval workflow, no payment/accounting
+  logic, no buyer/requester attribution model (Decision #9 was Purchase-
+  specific and does not need to be re-litigated by Phase 14 unless
+  Inventory has its own reason to introduce one) — these remain open for
+  whichever future phase actually owns them.
+- The full e2e suite intermittently hitting a "transient shell/PATH
+  exit-127" with zero output (first documented in Phase 11, recurring in
+  Phase 12) recurred again once during Phase 13's own verification
+  session on a single `jest --config ./test/jest-e2e.json --runInBand
+  test/purchase-orders.e2e-spec.ts` invocation — confirming this is a
+  general environment flakiness affecting even small, single-file
+  invocations on this machine, not something that only appears at
+  higher suite counts. Immediately re-running the exact same command
+  succeeded cleanly (38/38 tests passed) with no code changes — treat a
+  bare exit-127 with no jest summary output as a signal to retry the
+  identical command before assuming a real failure.
+- A general testing lesson from Phase 13: when an e2e assertion fails,
+  check whether the *test* or the *implementation* is wrong before
+  changing either — two of this phase's own e2e tests initially failed
+  for test-authoring reasons, not implementation bugs (a helper missing
+  a required `?companyId=` query param under SUPER_ADMIN's ALL scope,
+  and a wrong assumption that a cross-company FK lookup would 400 instead
+  of the actually-correct, already-established 404 IDOR-hiding
+  convention). Both were root-caused by reading the actual service code
+  the assertion was targeting before editing anything.
+- Next phase: **Phase 15 — Inventory Ledger**. Phase 14's `StockMovement`
+  table (`src/modules/inventory/entities/stock-movement.entity.ts`) is
+  the exact raw material Phase 15 is expected to build a queryable/
+  reportable ledger on top of — every stock-quantity change anywhere in
+  the system (`PURCHASE_RECEIPT`/`SALE_ISSUE`/`TRANSFER_IN`/
+  `TRANSFER_OUT`/`ADJUSTMENT`/`OPENING_BALANCE`) already has exactly one
+  corresponding append-only row, complete with `quantityChange`, a
+  denormalized `quantityAfter` snapshot, and a polymorphic
+  `referenceType`/`referenceId` pointer back to whichever document
+  (`GoodsReceipt`/`Sale`/`StockTransfer`/`StockAdjustment`) caused it.
+  Phase 14 deliberately built **no** query/list/report endpoint for this
+  table at all — `GET /warehouse-stock` only exposes the current balance,
+  never history — so Phase 15's entire job is a new read-side surface
+  (date-range filtering, running-balance reconstruction, per-document
+  drill-down, export) layered on top of a table whose write path is
+  already complete and stable; no schema migration of `stock_movements`
+  itself should be needed unless Phase 15 discovers a genuine gap. Phase
+  14 also inherits forward the same deferrals Phase 12/13 already
+  carried (no tax engine, no audit log, no approval workflow, no
+  payment/accounting logic) plus its own new ones — no valuation/FIFO/
+  weighted-average/COGS (Phase 17's integration point;
+  `docs/INVENTORY_ARCHITECTURE.md` §13 documents exactly what Phase 17
+  will need to add), no batch/lot/serial/expiry, no UOM, no reservation
+  workflow beyond the always-zero `reservedQuantity` schema column, no
+  reorder points, no Purchase/Sales Return. See
+  `docs/INVENTORY_ARCHITECTURE.md`'s "Phase 15 Inventory Ledger
+  Boundary" and "Deferred / Not Built" sections for the complete,
+  explicit list — none of these were silently assumed solved by Phase 14
+  or expected to be solved by Phase 15 without a fresh, explicit design
+  pass.
+- A real, evidence-backed concurrency lesson from Phase 14, worth
+  remembering for any future phase adding a new locked-read-then-mutate
+  pattern: `manager.save(Entity, entityHydratedViaSetLockGetOneOrFail)`
+  is not always safe — it was found, via real (not mocked) concurrency
+  e2e tests, to sometimes issue a duplicate INSERT instead of an UPDATE
+  against an already-existing, already-locked row, producing a
+  `Duplicate entry` error that looks like a UUID collision or a raw
+  InnoDB gap-lock issue but is neither. The fix is
+  `manager.update(Entity, lockedRow.id, { ...changedFields })`, which is
+  unambiguous. This exact pattern still exists unmodified in Phase
+  12/13's own sale-number/purchase-order-number counter generation
+  (their own tests pass reliably in practice, so it was flagged rather
+  than fixed, per this phase's "minimal and additive" mandate) — a
+  future phase touching that code should apply the same fix
+  proactively rather than waiting to rediscover the bug under load.
+  Separately: a plain (non-locking) `SELECT` inside a transaction under
+  MySQL's default `REPEATABLE READ` isolation reads from that
+  transaction's own consistent snapshot, established at the transaction's
+  start — **not** the latest committed data — even when the `SELECT`
+  runs after acquiring an unrelated row's pessimistic lock earlier in the
+  same transaction. Any future aggregate/SUM read that needs to see
+  concurrently-committed data from other transactions (the way Phase
+  14's GoodsReceipt remaining-quantity computation does) must add
+  `.setLock('pessimistic_read')` (or an equivalent locking read) — a
+  plain `SELECT` there will silently under-count and can allow a
+  business-rule violation (over-receiving, in Phase 14's case) to slip
+  through concurrency tests that only check the trivial single-request
+  path.
+
+### Phase 15 — Inventory Ledger
+
+Status: Completed.
+
+- **Boundary**: a purely read-only query layer over Phase 14's
+  `StockMovement` (append-only log) and `WarehouseStock` (live balance)
+  tables — exactly the "Phase 14 writes, Phase 15 queries" boundary
+  `docs/INVENTORY_ARCHITECTURE.md` §3/§14 had already flagged as this
+  phase's job. No new entity, no new migration, no new table, and **zero
+  modifications** to any Phase 12/13/14 file — `SalesService`,
+  `PurchaseOrdersService`, `GoodsReceiptsService`, `StockTransfersService`,
+  `StockAdjustmentsService`, `WarehouseStockService`, and every entity
+  under `src/modules/inventory/entities/` are byte-identical to their
+  pre-Phase-15 state (confirmed via `git diff`, zero output on all of
+  them). `InventoryLedgerService`/`InventoryLedgerController` were added
+  additively inside the already-registered `InventoryModule` — `app.module.ts`
+  and `src/database/typeorm.options.ts` needed **no changes**, since Phase
+  14 had already registered every entity this phase reads.
+- **Four GET-only endpoints, no write endpoint of any kind**: `GET
+  /inventory-ledger` (filtered/paginated/sorted list), `GET
+  /inventory-ledger/:id` (company-scoped detail, 404 on cross-company/
+  nonexistent), `GET /inventory-ledger/stock-card` (chronological
+  per-`(warehouseId, productVariantId)` movement history with computed
+  running balances), `GET /inventory-ledger/reconciliation` (diagnostic
+  comparison of `SUM(StockMovement.quantityChange)` against live
+  `WarehouseStock.onHandQuantity`). No `POST`/`PATCH`/`DELETE` anywhere —
+  proven by a dedicated e2e test asserting 404/405 on all three against
+  `/inventory-ledger`.
+- **List filters** (`GET /inventory-ledger`, all applied at the
+  query-builder level, never load-all-then-filter-in-JS): `warehouseId`,
+  `productVariantId`, `movementType`, `referenceType`, `referenceId`,
+  plus a genuinely new filter shape for this codebase — `fromDate`/
+  `toDate` (ISO-8601, `@IsDateString()`) — no prior list DTO
+  (`ListSalesDto`, `ListPurchaseOrdersDto`) had date-range filtering
+  before this phase. `fromDate > toDate` is rejected with 400, never
+  silently swapped. Standard `page`/`limit`/`sort`/`order` reused via the
+  existing Phase 04 `PaginationDto`/`resolveSortField()` completely
+  unmodified, with an explicit minimal sortable-column allowlist
+  (`createdAt` default, `quantityChange`, `movementType`) and a
+  `movement.id ASC` deterministic tiebreak always appended so paginated
+  results never duplicate/skip a row on a shared `createdAt`.
+- **Stock Card**: requires `warehouseId` + `productVariantId` (400 if
+  either missing, checked in the service layer rather than via decorator,
+  matching this codebase's existing required-together-fields convention).
+  Returns every matching movement in strict `createdAt ASC, id ASC` order
+  — the `id` tiebreak is load-bearing, never relying on natural DB
+  ordering. `balanceBefore`/`balanceAfter` are **never persisted** — both
+  are computed only in the response DTO
+  (`toStockCardEntryResponseDto()`): `balanceAfter = quantityAfter`
+  verbatim, `balanceBefore = quantityAfter - quantityChange`. Verified
+  against a real mixed sequence (`OPENING_BALANCE → PURCHASE_RECEIPT →
+  SALE_ISSUE → TRANSFER_OUT → ADJUSTMENT`) built entirely through real
+  Phase 14 write-path API calls in the e2e suite, asserting the exact
+  expected running balance at every step and cross-checking the final
+  value against a live `GET /warehouse-stock` call.
+- **Reconciliation diagnostic**: `ledgerBalance =
+  SUM(StockMovement.quantityChange)`, `warehouseStockBalance =
+  WarehouseStock.onHandQuantity` (0 for an untouched pair — the same
+  lazy-creation semantics `WarehouseStockService` already relies on),
+  `difference = warehouseStockBalance - ledgerBalance`, `reconciled =
+  difference === 0`. Purely diagnostic — never writes, never "fixes"
+  anything. Under correct Phase 14 code every real pair is always
+  reconciled (each write path mutates both tables inside the same
+  transaction), so the e2e suite proves the reconciled-true case through
+  real writes and separately proves the formula's own correctness by
+  independently recomputing both sides directly against the live tables
+  via `dataSource.query()` — it does **not** manufacture an artificial
+  `reconciled: false` case by writing directly to
+  `stock_movements`/`warehouse_stock`, since the locked spec explicitly
+  frames direct data tampering as inappropriate here. Both directions of
+  a nonzero `difference` (`WarehouseStock` above vs. below the ledger
+  sum) are covered at the unit-test level instead, where mocking the two
+  compared values independently is a legitimate way to test the
+  comparison arithmetic without touching real data.
+- **DataScope/company scoping**: `DataScopeService`/
+  `resolveRequestCompanyId()` reused completely unmodified — no new scope
+  kind. Company scoping resolved by joining through
+  `warehouse.companyId` in every query, the same "derive scope through
+  the entity's real parent" pattern `WarehouseStockService` itself
+  established in Phase 14 (`StockMovement`, like `WarehouseStock`, has no
+  `companyId` column of its own). Cross-company filters/ids never leak
+  existence — list/reconciliation queries return an empty/zero result,
+  `:id` detail lookups return 404, matching the IDOR-hiding convention
+  every phase since Phase 09 has followed.
+- **RBAC**: exactly one new permission, `inventory_ledger.read` — no
+  `.create`/`.update`/`.delete`, since Phase 15 has no write endpoint at
+  all. Appended (not restructured) to the existing idempotent seed
+  (`src/database/seeds/rbac.seed.ts`), granted to `SUPER_ADMIN`, plus the
+  now-standard `RoleResourceScope` `ALL`-scope grant for
+  `inventory_ledger`. Verified live via the seed script's own console
+  output on first run (one permission created, one grant, one ALL-scope
+  row) and confirmed idempotent on re-run (zero output beyond the
+  completion line).
+- **Migration**: **none** — zero new migration files (still exactly the
+  same 10 files under `src/database/migrations/`). `SHOW CREATE TABLE
+  stock_movements` and `SHOW CREATE TABLE warehouse_stock` were
+  re-inspected against live Dockerized MySQL after implementation and
+  match Phase 14's original column/index/constraint definitions exactly
+  — confirmed no drift on either table, no new table created.
+- **Tests**: 30 new unit tests (`inventory-ledger.service.spec.ts` —
+  every filter dimension, invalid-date-range rejection, pagination,
+  sorting including the allowlist rejection, `balanceBefore`/
+  `balanceAfter` derivation for positive/negative/zero-crossing
+  `quantityChange`, reconciliation for both the reconciled and
+  non-reconciled — both directions — cases, cross-company `findByIdInCompany`
+  isolation) + 28 new e2e tests (`test/inventory-ledger.e2e-spec.ts` —
+  authentication 401, permission-boundary 403, the no-POST/PATCH/DELETE
+  proof, list empty/populated/every-filter-dimension/pagination/
+  deterministic-ordering, detail existing/missing/cross-company, stock
+  card required-params/full-mixed-real-sequence-with-correct-running-
+  balances/warehouse-and-variant-isolation, reconciliation required-params/
+  real-reconciled-case/untouched-pair-zero-case/independently-recomputed-
+  formula-correctness, cross-company/unauthorized-scope rejection) — all
+  built by reusing Phase 14's real write-path APIs
+  (`POST /goods-receipts`, `POST /sales/:id/confirm`,
+  `POST /stock-transfers`, `POST /stock-adjustments`) as fixtures, never
+  by inserting `StockMovement` rows directly via a repository (which
+  would bypass the exact write path this phase is validating against).
+  **No concurrency test was added** — this phase introduces no write
+  operation of any kind, so a manufactured concurrency test would be
+  artificial; stated explicitly here rather than silently skipped, per
+  the locked spec's own instruction. All pre-existing tests continue
+  passing: full unit suite **406 passed + 7 DB-gated skips (413 total)**;
+  full 13-suite e2e regression run in the same two-batch convention prior
+  phases used — batch 1 (app/auth/organization/master-data/products/rbac)
+  **119/119**, batch 2 (customer-supplier/user-employee-account/
+  validation/sales/purchase-orders/inventory/inventory-ledger)
+  **201/201** — **320 e2e tests total, zero failures**.
+- **Test-authoring bugs found and fixed during this phase's own e2e
+  verification** (not implementation bugs): (1) the e2e fixture's
+  `createSale()` helper initially omitted the required `currency` field
+  from `CreateSaleDto`, causing every sale creation to 400 and silently
+  producing zero `SALE_ISSUE` movements in three tests — fixed by adding
+  `currency: 'USD'` and a fail-fast status check that throws with the
+  full response body on any non-201, so the real cause (missing field, not
+  a Phase 14/15 bug) was immediately visible instead of surfacing only as
+  a downstream count mismatch. (2) the price-list-item fixture helper
+  initially sent `companyId` in the request body instead of as a query
+  param and used a bare-date `validFrom` instead of a full ISO datetime,
+  causing "No active price found" 400s on sale creation — fixed by
+  matching `test/sales.e2e-spec.ts`'s own
+  `createActivePriceListItem()` convention exactly
+  (`?companyId=` query param, `validFrom: '2020-01-01T00:00:00Z'`). (3)
+  the documented "transient shell/PATH exit-127" flakiness (first seen
+  Phase 11, recurring every phase since) recurred once on this phase's
+  own e2e batch-2 run with zero output — an immediate identical re-run
+  succeeded cleanly (201/201), consistent with every prior phase's
+  experience.
+- `docs/INVENTORY_ARCHITECTURE.md` §19 documents the full architecture
+  additively (a new section appended after Phase 14's existing §1–§18,
+  none of which were rewritten or restructured) — the read-only
+  guarantee, the full API surface and filter set, the
+  `balanceBefore`/`balanceAfter` derivation formula, the reconciliation
+  semantics, the RBAC grant, and an explicit "schema unchanged" statement
+  with live verification evidence.
+- Verified: zero real implementation of `InventoryLedgerEntry`,
+  `InventoryValuation`, `CostLayer`, `FIFOLayer`, `AverageCost`, `COGS`,
+  `JournalEntry`, `GLAccount`, `AuditLog`, or `Outbox` anywhere in the new
+  Phase 15 files (grepped — no matches at all, not even doc-comments,
+  since none of these concepts are relevant to a pure query layer). Zero
+  new migration files. Zero modifications to
+  `src/modules/sales/services/sales.service.ts`,
+  `src/modules/purchase/services/purchase-orders.service.ts`, or any file
+  under `src/modules/inventory/entities/` or
+  `src/modules/inventory/services/warehouse-stock.service.ts`/
+  `goods-receipts.service.ts`/`stock-transfers.service.ts`/
+  `stock-adjustments.service.ts` (confirmed via `git diff`, byte-identical
+  to their pre-Phase-15 state). Zero frontend files touched. No new npm
+  dependencies were added (Phase 15 reused Phase 03/04/06/08/09/14's
+  TypeORM/validation/transaction/RBAC/organization/inventory
+  infrastructure entirely).
+- **Not committed**: per explicit instruction, this phase's work remains
+  uncommitted in the working tree — no `git commit`, no `git push`.
+  Phase 09-14's own still-uncommitted changes were left exactly as they
+  were, untouched beyond the two additive edits (`inventory.module.ts`,
+  `rbac.seed.ts`) this phase needed to make.
+
+Known/accepted gaps carried forward:
+
+- No CSV/export functionality for the ledger list or stock card — the
+  locked spec's own scope did not require one; a future phase could add
+  it as a pure additive endpoint on top of the same read-only query
+  layer.
+- No per-document drill-down convenience endpoint (e.g. resolving
+  `referenceType`/`referenceId` into the actual `GoodsReceipt`/`Sale`/
+  `StockTransfer`/`StockAdjustment` record inline) — the polymorphic
+  `referenceType`/`referenceId` pair is returned as-is; a caller wanting
+  the full referenced document today must make a second request to that
+  document's own existing endpoint.
+- Valuation/FIFO/weighted-average/COGS/accounting postings remain
+  entirely out of scope — still explicitly Phase 17's concern (§13 of
+  `docs/INVENTORY_ARCHITECTURE.md`, unchanged by this phase).
+- No Bruno API collection — consistent with every prior phase.
+- `@nestjs/swagger`'s transitive `js-yaml` advisory (unchanged since
+  Phase 01, dev-time only).
+
+### Phase 16 — Payment
+
+Status: Completed.
+
+- **Boundary**: exactly four entities — `Payment`, `PaymentAllocation`,
+  `PaymentMethod`, `CompanyPaymentCounter` — in a new
+  `src/modules/payments/` module. Confirmed live: it does not depend on
+  `InventoryModule`, and no `/inventory-ledger` read was needed — Phase
+  15's own "most likely integration point" speculation did not apply,
+  which is stated honestly here rather than forced into existing.
+- **Payment / PaymentAllocation**: `Payment` is the dedicated,
+  authoritative record (never embedded in Sale/PurchaseOrder), with a
+  single `direction` enum (`RECEIPT`|`PAYMENT`) covering both customer
+  receipts and supplier payments — exactly one of `customerId`/
+  `supplierId` set, matching direction, enforced in the service layer
+  (no DB `CHECK`, matching every prior phase's own convention).
+  `PaymentAllocation.referenceType`/`referenceId` is a polymorphic,
+  **no-FK** pointer at a `Sale` or `PurchaseOrder` row — a direct,
+  deliberate reuse of `StockMovement.referenceType`/`referenceId`'s
+  established Phase 14 precedent, not a new pattern. `PaymentAllocation`
+  does not extend `BaseEntity` (own `id`/`createdAt` only, no
+  soft-delete/`updatedAt`), mirroring `SaleItem`/`PurchaseOrderItem`;
+  `paymentId` is `ON DELETE CASCADE` (the one deliberate CASCADE in this
+  schema, matching `GoodsReceiptItem`/`StockTransferItem`'s own
+  precedent).
+- **PaymentMethod**: real, company-scoped master data (`code`/`name`/
+  `status` enum, `UNIQUE(company_id, code)`), a direct structural mirror
+  of Phase 09's `Category`/`Brand` — `status` is an `ACTIVE`/`INACTIVE`
+  enum, not a boolean, matching the codebase's own master-data
+  convention exactly. Deliberately smaller API surface than Brand/
+  Category: `GET`(list+detail)/`POST` only, no PATCH/activate/
+  deactivate/DELETE — the locked spec's own API surface for this
+  resource, not an oversight.
+- **Lifecycle decision (D4)**: every `Payment` is created directly
+  `CONFIRMED` — no separate `DRAFT` stage, no `POST /payments/:id/confirm`
+  endpoint. Reasoning (full version in `docs/PAYMENT_ARCHITECTURE.md`
+  §6): allocation happens inside the same `POST /payments` call the
+  locked spec requires, so a DRAFT stage would carry no distinct
+  behavior — building a confirm endpoint that does nothing but flip a
+  status column would be inventing an inert state the locked spec's own
+  instruction explicitly warned against. `PaymentStatus.Cancelled`
+  remains in the enum for shape symmetry with `SaleStatus`/
+  `PurchaseOrderStatus`, but nothing in this phase ever assigns it — a
+  cancel that doesn't reverse the balance effect it caused would leave
+  the system lying about `paidAmount`, so no cancel endpoint was built
+  either (stated honestly as a real, considered decision, not a silent
+  gap).
+- **Sales/Purchase integration — the cross-phase-boundary change (D16,
+  EXPLICITLY AUTHORIZED)**: `SalesService` and `PurchaseOrdersService`
+  each gained exactly one new method, `applyPayment(id, companyId,
+  allocatedAmount, userId, manager)` — locks the target row itself
+  (`setLock('pessimistic_write')`, company-scoped in the same query),
+  computes `newPaid = oldPaid + allocated` / `newBalance = grandTotal -
+  newPaid`, rejects (409) if `newPaid > grandTotal`, and writes via
+  `manager.update()` — never `manager.save()` on the lock-hydrated
+  entity, deliberately avoiding the exact bug class Phase 14 already
+  found and fixed once. Neither service opens its own transaction inside
+  `applyPayment()` — it participates in `PaymentsService`'s single
+  `TransactionService.run()` call. **Verified via manual `git diff`
+  review** (not just assertion): `sales.service.ts`'s diff against its
+  Phase-12-commit baseline shows only the Phase-14 `confirm()` stock-
+  deduction block (pre-existing, already in the working tree before this
+  phase started) plus the new `applyPayment()` method appended at the
+  end — `create()`, `cancel()`, `findAll()`, `findByIdInCompany()`, and
+  every private helper are byte-identical. `purchase-orders.service.ts`
+  is entirely untracked (all of Phase 13 was never committed), so `git
+  diff` has no baseline to compare against for it; confirmed instead by
+  method-signature enumeration (`grep -n "^  async \|^  private "`)
+  showing every original method present in original order with only
+  `applyPayment()` newly appended, consistent with this phase's single,
+  additive `Edit` call against that file (511 lines → 561 lines, a net
+  +50 matching the new method's exact length).
+- **Numbering (D6)**: `CompanyPaymentCounter`, an exact structural mirror
+  of `CompanySaleCounter`/`CompanyPurchaseCounter`/
+  `CompanyGoodsReceiptCounter`/`CompanyStockTransferCounter`/
+  `CompanyStockAdjustmentCounter` — same upsert-then-`SELECT...FOR
+  UPDATE`-lock pattern, same `retryOnDuplicateEntry()` wrapper reused
+  verbatim from Phase 14, same `formatDocumentNumber()` formatter reused
+  verbatim (prefix `PMT`, e.g. `PMT-2026-000001`).
+- **Deterministic multi-document locking (locked spec §8/step 9)**: a
+  single payment's allocations can reference multiple distinct
+  Sale/PurchaseOrder rows; `PaymentsService.create()` deduplicates every
+  `(referenceType, referenceId)` target, sums per-target allocation
+  amounts, sorts the target list by `(referenceType, referenceId)`
+  **before acquiring any lock**, then calls `applyPayment()` once per
+  target in that order — the exact `StockTransfersService` (Phase 14)
+  deadlock-prevention pattern, generalized from `(warehouseId,
+  productVariantId)` tuples to `(referenceType, referenceId)` tuples.
+- **Idempotency (D11)**: optional `Idempotency-Key` header →
+  `Payment.idempotencyKey` (nullable, `UNIQUE(company_id,
+  idempotency_key)` — MySQL's multiple-NULLs-don't-collide behavior
+  confirmed live). Two-layer protection: a pre-transaction lookup returns
+  the existing payment (200, not 201) on a known key; a race backstop
+  catches the `ER_DUP_ENTRY`/errno 1062 the losing side of two truly
+  concurrent same-key requests raises against the unique index (narrowed
+  to that specific index by its error message, so an unrelated
+  duplicate-key failure is never misread as a replay) and re-fetches the
+  winning row instead of erroring or duplicating. Proven live by a
+  same-key-replay e2e test and a same-key-different-company e2e test
+  (must NOT collide — proven non-colliding).
+- **RBAC**: exactly four new permissions —
+  `payments.read`/`payments.create`, `payment_methods.read`/
+  `payment_methods.create` — no `.update`/`.delete`/`.confirm`/`.refund`/
+  `.reverse`/`.void`/`.export`/`.summary`/`.reconcile` for either
+  resource (verified live: the seed's first run printed exactly 4 new
+  permissions/4 grants/2 `ALL`-scope rows; a re-run printed only the
+  completion line, idempotent).
+- **APIs**: `GET /payments`, `GET /payments/:id`, `POST /payments`
+  (Idempotency-Key honored) — no PATCH/DELETE/refund/reverse/void/
+  summary/reconciliation/export endpoint of any kind, and deliberately
+  no `POST /payments/:id/confirm` (see the D4 lifecycle decision above).
+  `GET /payment-methods`, `GET /payment-methods/:id`,
+  `POST /payment-methods`. Full list in `docs/PAYMENT_ARCHITECTURE.md`.
+- **Migration**: `1786580000000-CreatePaymentTables.ts` — four tables in
+  dependency order (`payment_methods` → `company_payment_counters` →
+  `payments` → `payment_allocations`). **A real FK-name collision was
+  found and fixed during first UP verification**: the migration's first
+  draft named `company_payment_counters`' FK `FK_cpc_company`, which
+  collided with `company_purchase_counters`' own `FK_cpc_company` from
+  Phase 13's migration (`ER_FK_DUP_NAME`) — renamed to
+  `FK_cpymtc_company`. The failed first attempt left orphaned
+  `payment_methods`/`company_payment_counters`/`payments`/
+  `payment_allocations` tables (MySQL DDL auto-commits per-statement,
+  independent of the migration's own transaction — the same lesson
+  Phase 10 first documented), manually dropped before the corrected
+  migration's clean run. Verified UP → DOWN → UP against real Dockerized
+  MySQL with `SHOW CREATE TABLE` inspection of all four tables
+  (confirming correct `DECIMAL(14,2)` money columns, `ON DELETE
+  RESTRICT` everywhere except `payment_allocations.payment_id`'s
+  deliberate `ON DELETE CASCADE`, and the `UNIQUE(company_id,
+  idempotency_key)` index), with an explicit re-check after every step
+  that all Phase 13/14/15 tables (`purchase_orders`, `goods_receipts`,
+  `warehouse_stock`, `stock_movements`, `stock_transfers`,
+  `stock_adjustments`, and their three counters) remained present and
+  untouched — 51 tables before, 51 after DOWN removed the 4 new ones
+  (leaving only the pre-existing `payment_terms` table under the
+  `payment%` pattern), 55 after UP restored them.
+- **Tests**: 24 new unit tests (`payments.service.spec.ts`,
+  `payment-methods.service.spec.ts`) + 9 new unit tests appended to the
+  existing `sales.service.spec.ts`/`purchase-orders.service.spec.ts`
+  (`applyPayment()` — lock verification, NotFound on missing row, correct
+  `paidAmount`/`balanceAmount` arithmetic via `manager.update()`,
+  over-allocation 409 rejection) + 27 new e2e tests
+  (`test/payments.e2e-spec.ts` — auth/permission boundaries, no-PATCH/
+  DELETE/refund proof, RECEIPT-against-Sale and PAYMENT-against-
+  PurchaseOrder full flows with real balance verification, partial
+  payment, over-allocation 409 (both single-payment and cumulative-
+  second-payment forms), direction/referenceType cross-validation (all 4
+  combinations), DTO validation (unknown fields, empty allocations,
+  over-summed allocations, inactive payment method, cross-company 404),
+  idempotency (replay returns 200 + same id, cross-company non-collision),
+  a real `Promise.all()` two-way concurrency test proving over-allocation
+  is prevented under genuine concurrent load (exactly one 201 + one 409,
+  final `paidAmount` exactly correct, exactly one `payments` row
+  survives), a real 10-way concurrent `POST /payments` payment-number-
+  uniqueness test, PaymentMethod CRUD-surface tests, and GET list/detail
+  including cross-company 404). All 27 pass — verified against live
+  Docker MySQL (`node node_modules/jest/bin/jest.js --config
+  ./test/jest-e2e.json --runInBand --testPathPatterns payments.e2e-spec`,
+  22.95s, 0 failures).
+- **Test-authoring bug found and fixed during this phase's own e2e
+  verification** (not an implementation bug): the e2e suite's cleanup
+  function initially deleted `product_variants` before deleting
+  `stock_adjustments` rows referencing them (left over from an earlier
+  interrupted run of this same suite), causing every test to fail in
+  `beforeAll` with `FK_stkadj_product_variant` `RESTRICT` errors — the
+  same category of bug Phase 09 first found and fixed for `categories`'
+  self-referencing FK. Fixed by adding `DELETE FROM stock_adjustments`
+  and `DELETE FROM company_stock_adjustment_counters` (scoped to this
+  suite's own warehouses) before the existing `product_variants` cleanup,
+  matching the "children before parents" convention every e2e suite
+  since Phase 09 has followed.
+- Security review performed and verified live: unauthenticated → 401,
+  authenticated-without-permission → 403, cross-company Customer/
+  Supplier/PaymentMethod/Sale/PurchaseOrder/Payment → 404 (IDOR-safe,
+  never a leaked existence signal), direction/party mismatch (RECEIPT
+  with both or neither of customerId/supplierId set, PAYMENT the same) →
+  400, referenceType/direction mismatch → 400, over-allocation (against a
+  single document's grandTotal, or against the payment's own amount
+  across all allocations) → 409/400, unknown/extra fields → 400 (existing
+  global `ValidationPipe`), idempotency-key replay → 200 with the
+  original payment body, no refund/reverse/void/PATCH/DELETE endpoint
+  anywhere → 404/405.
+- `docs/PAYMENT_ARCHITECTURE.md` documents the full architecture,
+  including the D4 lifecycle reasoning, the D16 cross-phase integration
+  rationale, the deterministic multi-document locking design, the
+  idempotency strategy, and the explicit Phase 16-vs-Phase-17 running-
+  balance-vs-Chart-of-Accounts boundary (per
+  `docs/CUSTOMER_SUPPLIER_ARCHITECTURE.md` §18's own advance framing).
+- Verified: zero real implementation of `JournalEntry`/`GLAccount`/
+  `ChartOfAccounts`/`GeneralLedger`/`CashAccount`/`BankAccount`/
+  `ExchangeRate`/`Refund`/`Reversal`/`Void`(-as-a-concept)/`SalesReturn`/
+  `PurchaseReturn`/`AuditLog`/`Outbox`/`BullMQ`/`Redis`, and zero
+  mutation of `WarehouseStock`/`StockMovement`/`GoodsReceipt`/
+  `StockTransfer`/`StockAdjustment`, anywhere in `src/modules/payments`
+  or in the two modified Sales/Purchase files (grepped — the only matches
+  were doc-comments explicitly stating these concepts do NOT exist here,
+  plus three incidental `Promise<void>` TypeScript return-type matches,
+  never real implementation). Zero frontend files touched. No new npm
+  dependencies were added (Phase 16 reused Phase 03/04/06/08/09/11/12/13/
+  14's TypeORM/validation/transaction/RBAC/organization/customer-
+  supplier/sales/purchase/inventory infrastructure entirely).
+- **Not committed**: per explicit instruction, this phase's work remains
+  uncommitted in the working tree — no `git commit`, no `git push`.
+  Phase 09-15's own still-uncommitted changes were left exactly as they
+  were, untouched beyond the two additive `applyPayment()` method
+  additions this phase needed to make.
+
+Known/accepted gaps carried forward:
+
+- No refund/reversal/void of any kind — a deliberate, documented D10
+  deferral (see `docs/PAYMENT_ARCHITECTURE.md` §15), not an oversight.
+  `PaymentStatus.Cancelled` exists in the enum but nothing in this phase
+  ever assigns it.
+- No accounting/GL integration, not even a prepared interface — Phase
+  17's concern entirely (see `docs/PAYMENT_ARCHITECTURE.md` §13).
+- No `Currency` entity, no exchange rates, no multi-currency conversion.
+- No Bruno API collection — consistent with every prior phase.
+- `@nestjs/swagger`'s transitive `js-yaml` advisory (unchanged since
+  Phase 01, dev-time only).
+
+### Phase 17 — Accounting / General Ledger
+
+Status: Completed.
+
+- **Boundary**: six new entities in a new `src/modules/accounting/`
+  module — `Account`, `CompanyJournalCounter`, `FiscalYear`,
+  `AccountingPeriod`, `JournalEntry`, `JournalEntryLine`. No
+  `general_ledger`/`opening_balances`/`cash_accounts`/`bank_accounts`/
+  `tax_accounts` table — `JournalEntry`+`JournalEntryLine` are the SOLE
+  accounting source of truth; General Ledger and Trial Balance are pure
+  read-query projections over posted journal lines
+  (`GeneralLedgerService`/`TrialBalanceService`), never physical tables.
+- **Account (Chart of Accounts)**: company-scoped, self-referencing
+  (`parentId -> accounts`), a direct structural mirror of Phase 09's
+  `Category` — `UNIQUE(company_id, code)`, cycle prevention
+  (`AccountsService.assertNoCycle()`, byte-for-byte the same algorithm as
+  `CategoriesService`'s own), cross-company parent rejected. `accountType`
+  is exactly the five standard classifications
+  (`ASSET|LIABILITY|EQUITY|REVENUE|EXPENSE`) — no speculative CASH/BANK/
+  RECEIVABLE/PAYABLE/COGS subtype, since nothing in the actual posting
+  logic branches on it (which specific account is used comes from
+  `PaymentMethod.glAccountId`/`Customer.receivableAccountId`/
+  `Supplier.payableAccountId` instead). No DELETE endpoint — deactivation
+  (`PATCH isActive:false`) is the only lifecycle transition.
+- **Journal lifecycle**: `DRAFT -> POSTED` (terminal, immutable — no
+  PATCH/DELETE on a POSTED journal, no reversal endpoint) or
+  `DRAFT -> CANCELLED` (also terminal). `CANCELLED` was added here but
+  deliberately NOT added to `Payment` in Phase 16 — a manual journal entry
+  (`POST /journal-entries`) genuinely can sit unposted while a user builds
+  it, unlike a Payment, which is always atomically allocated in the same
+  call that creates it.
+- **Double-entry validation** (`src/modules/accounting/utils/
+  double-entry.ts`): every line has exactly one of debitAmount/
+  creditAmount non-zero and positive, the other exactly zero; every
+  journal's `SUM(debitAmount) === SUM(creditAmount)`. Uses integer-cents
+  arithmetic for this one balance check specifically (not the
+  `.toFixed(2)`-per-value convention used everywhere else in this
+  codebase) — the one place an exact equality is checked across a sum of
+  potentially many values, where summing native floats before rounding is
+  exactly the failure mode that can make `0.10 + 0.20 !== 0.30` true;
+  proven by a dedicated unit test. `totalDebit`/`totalCredit` on
+  `JournalEntry` are a denormalized cache, always re-derived and
+  re-validated from the actual lines at `post()` time.
+- **PaymentMethod.glAccountId (the one PaymentMethod-account-mapping
+  judgment call, LOCKED-delegated)**: a new, additive, nullable `char(36)`
+  column with a real FK to `accounts` (`ON DELETE RESTRICT`), added via
+  this phase's own migration (`ALTER TABLE payment_methods ADD
+  gl_account_id ...`). Unlike `Customer.receivableAccountId`/
+  `Supplier.payableAccountId`'s deliberately FK-less Phase-11 placeholders
+  (no Chart of Accounts existed yet when those were created), a real FK
+  was used here since `accounts` exists by the time this column is added
+  within this same migration. No endpoint exposes it for writing —
+  `CreatePaymentMethodDto` doesn't include it, and PaymentMethod's locked
+  API surface (Phase 16, D14) has no PATCH endpoint at all — set only via
+  direct data administration. Confirmed purely additive: `payment_methods`'
+  pre-existing `companyId`/`code`/`name`/`status` columns are untouched,
+  verified live via `SHOW CREATE TABLE` before/after a full migration
+  DOWN cycle (byte-identical).
+- **Payment -> GL automatic posting (the core cross-phase integration,
+  D6/D7/D13/D19)**: `AccountingPostingService.postPayment()` accepts the
+  caller's transactional `EntityManager` and never opens its own
+  transaction — mirrors `SalesService.applyPayment()`'s own contract from
+  Phase 16 exactly. `PaymentsService.create()` gained exactly ONE
+  additive block (after the Payment/PaymentAllocation rows already
+  exist, so `sourceId=savedPayment.id` is real): fetch
+  PaymentMethod/Customer/Supplier via the same transactional manager,
+  call `postPayment()`. Confirmed via full manual diff review (no git
+  baseline exists since Phase 16 was never committed, so this was a
+  literal side-by-side comparison against the file as read at the start
+  of this phase): every other method (`findAll`, `findByIdInCompany`,
+  `findByIdempotencyKey`, `generatePaymentNumber`,
+  `assertValidPartyForDirection`, `assertValidPaymentMethod`,
+  `assertAllocationsValid`, the lock-ordering/dedup logic, Payment/
+  PaymentAllocation row creation, the idempotency race-catch block,
+  `isDuplicateIdempotencyKeyError`) is byte-identical to its pre-Phase-17
+  state. Posting rules: `RECEIPT`: Dr cash/bank (from
+  `PaymentMethod.glAccountId`) / Cr receivable (from
+  `Customer.receivableAccountId`); `PAYMENT`: Dr payable (from
+  `Supplier.payableAccountId`) / Cr cash/bank. **Fail-closed**: any
+  missing/inactive/cross-company account mapping throws
+  `ErrorCode.ValidationError`, rolling back the ENTIRE Payment
+  transaction — no Payment row, no PaymentAllocation row, no
+  Sale/PurchaseOrder balance change, no JournalEntry — proven live by a
+  dedicated e2e rollback-safety test querying the database directly
+  after the failed request.
+- **Idempotency / duplicate-posting prevention**:
+  `UNIQUE(company_id, source_type, source_id)` on `journal_entries`
+  (MySQL's multiple-NULLs-non-colliding behavior, same as
+  `Payment.idempotencyKey`'s own pattern). Two-layer protection mirroring
+  `PaymentsService`'s own idempotency handling: a pre-creation
+  `findBySource()` lookup, plus a race backstop catching
+  `ER_DUP_ENTRY`/1062 narrowed to the source-uniqueness index
+  specifically.
+- **Period / fiscal-year enforcement**: `FiscalYear` (`OPEN|CLOSED`) +
+  `AccountingPeriod` (`OPEN|LOCKED`), both minimal, no automatic closing
+  workflow. Posting into a LOCKED period or CLOSED fiscal year is
+  rejected (409). **Lazy auto-creation** (`AccountingPeriodResolverService
+  .resolveOpenPeriod()`) answers the locked spec's own "no POST endpoint
+  is listed, you decide how periods get created" delegation: the first
+  journal entry needing to post into a `(company, year)` with no existing
+  period lazily creates a calendar-year FiscalYear+AccountingPeriod pair
+  (both `OPEN`); subsequent postings for the same year reuse it. A
+  race-guard re-check immediately before insert prevents a duplicate pair
+  under genuine concurrent first-use.
+- **RBAC**: exactly eight new permissions — `accounts.read/create/update`,
+  `journal_entries.read/create/post`, `general_ledger.read`,
+  `trial_balance.read` — no `.delete`/`.approve`/`.reject`/`.reverse`/
+  `general_ledger.write` for any resource (verified live: seed's first run
+  printed exactly 8 new permissions/8 grants/4 new ALL-scope rows; re-run
+  printed only the completion line, idempotent).
+- **APIs**: `GET/POST/PATCH /accounts`, `GET/POST /journal-entries` +
+  `POST /journal-entries/:id/post`, `GET /general-ledger`,
+  `GET /trial-balance` — exactly the locked D22 surface, nothing more.
+- **Migration**: `1786590000000-CreateAccountingTables.ts` — six tables in
+  dependency order (`accounts -> company_journal_counters -> fiscal_years
+  -> accounting_periods -> journal_entries -> journal_entry_lines`) plus
+  the additive `payment_methods.gl_account_id` ALTER at the end. Verified
+  UP -> DOWN -> UP against real Dockerized MySQL 8.0.40 with `SHOW CREATE
+  TABLE` inspection of all six new tables and the modified
+  `payment_methods` table; an explicit byte-for-byte diff proved
+  `payments`/`payment_methods`/`purchase_orders`/`stock_movements` are
+  identical before the migration and after a full DOWN cycle (with
+  `payment_methods` correctly losing exactly its `gl_account_id`
+  column/FK on DOWN) — 56 pre-existing tables before this phase's
+  migration, 56 again after a full DOWN cycle (all 6 new tables cleanly
+  removed, confirmed via `information_schema.tables` count and a
+  table-name diff showing zero unexpected additions/removals), 62 after
+  the final UP (56 + 6 new, confirmed via
+  `SELECT COUNT(*) FROM information_schema.tables`).
+- **Tests**: 66 new unit tests across 7 spec files (`double-entry`,
+  `accounts.service`, `journal-entries.service`,
+  `accounting-posting.service`, `accounting-period-resolver.service`,
+  `general-ledger.service`, `trial-balance.service`) + 2 new unit-test
+  wiring changes to the pre-existing `payments.service.spec.ts` (added
+  the new `AccountingPostingService` constructor mock, all 18 pre-existing
+  tests still pass unmodified in behavior) + 21 new e2e tests
+  (`test/accounting.e2e-spec.ts` — auth/permission boundaries, Account
+  CRUD incl. cycle-rejection and cross-company 404, manual journal
+  create/post incl. unbalanced-rejection and double-post-rejection (409),
+  GL/Trial-Balance read-projection correctness (DRAFT journals excluded,
+  POSTED included, global debit=credit), a real Payment->GL e2e test for
+  both RECEIPT and PAYMENT directions asserting the exact Dr/Cr accounts
+  used, locked-period rejection, and two rollback-safety tests — missing
+  PaymentMethod.glAccountId and missing Customer.receivableAccountId each
+  proven, by direct DB query after the failed request, to leave zero
+  Payment/PaymentAllocation/JournalEntry rows and zero Sale balance
+  change — plus a real 10-way `Promise.all()` journal-numbering
+  concurrency test). Total suite after Phase 17: **505 unit tests / 368
+  e2e tests, all passing** (`npm test`: 59 suites passing + 2 skipped
+  DB-gated, 505 passed/7 skipped/512 total; `node node_modules/jest/bin/
+  jest.js --config ./test/jest-e2e.json --runInBand`: 15 suites, 368/368
+  passing, exit code 0).
+- **Two real cross-suite regressions found and fixed during this phase's
+  own e2e verification** (not implementation bugs, but real consequences
+  of Phase 17's now-mandatory Payment->GL posting on Phase 16's
+  pre-existing fixtures): (1) `test/payments.e2e-spec.ts`'s
+  `setupBaseFixture()` never configured `PaymentMethod.glAccountId`/
+  `Customer.receivableAccountId`/`Supplier.payableAccountId` — since
+  every real `POST /payments` call now synchronously posts to the GL and
+  fails closed without those mappings, every pre-existing Payment test in
+  that suite started returning 400 instead of 201. Fixed by adding a
+  `createChartOfAccountsFixture()` helper and wiring its output through
+  `setupBaseFixture()` — a test-fixture update reflecting a real, intended
+  new precondition, not a change to `PaymentsService`'s own logic (which
+  remains untouched beyond the one authorized `postPayment()` call). (2)
+  Two "children before parents" cleanup-ordering bugs, the same category
+  Phase 09/14/16 each already found and fixed once for their own suites:
+  `test/accounting.e2e-spec.ts`'s cleanup didn't clear
+  `purchase_order_items`/`purchase_orders` before deleting `suppliers`
+  (RESTRICT FK failure on a leftover PO from an interrupted run), and
+  didn't clear self-referencing `accounts.parent_id` before bulk-deleting
+  `accounts` rows (same bug class as Phase 09's `categories.parent_id`
+  fix) — both fixed, and the same two omissions were also fixed in
+  `test/payments.e2e-spec.ts`'s own cleanup (which now also needed to
+  clean up `journal_entries`/`fiscal_years`/`accounting_periods` rows its
+  own real Payment postings started creating).
+- **One stale Phase-11 boundary assertion updated, narrowly**:
+  `test/customer-supplier.e2e-spec.ts` had a test literally asserting
+  `accounts` (among other speculative table names) does not exist in this
+  codebase — true when Phase 11 wrote it, no longer true now that Phase
+  17 has legitimately created a real `accounts` table (which Phase 11's
+  own "Accounting Mapping Placeholders" section explicitly anticipated:
+  "Phase 17 gives `receivableAccountId`/`payableAccountId` a real FK
+  target once a Chart of Accounts table exists"). Updated the single
+  assertion to check the two speculative alternate names
+  (`gl_accounts`/`chart_of_accounts`) and the
+  never-built-by-any-phase `customer_sales_account_assignments` table
+  still don't exist, while asserting `accounts` now correctly does — a
+  narrow, direct fix to a premise Phase 17 legitimately changed, not a
+  re-opening of any other Phase 11 boundary or logic.
+- Security review performed and verified live: unauthenticated -> 401,
+  authenticated-without-permission -> 403, cross-company Account/
+  JournalEntry lookup -> 404 (IDOR-safe), posting into a LOCKED period or
+  CLOSED fiscal year -> 409, missing Payment account mapping -> 400
+  (`ValidationError`) with full transaction rollback verified by direct
+  DB query (not just the HTTP response), double-posting a POSTED journal
+  -> 409, unknown/extra fields -> 400 (existing global `ValidationPipe`),
+  no PATCH/DELETE/reversal endpoint anywhere on `JournalEntry` once
+  `POSTED` -> 404/405.
+- `docs/ACCOUNTING_ARCHITECTURE.md` documents the full architecture,
+  including the PaymentMethod.glAccountId judgment call, the integer-cents
+  balance-check decision, the lazy period-creation decision, the
+  fail-closed ValidationError-vs-Conflict reasoning, and the complete
+  explicit-deferrals list (Sale/Purchase posting, COGS/valuation, tax,
+  multi-currency, reversal, approval workflow, Cash/Bank entities,
+  Outbox/events, reporting dashboards, opening-balance generation).
+- Verified: zero real implementation of `general_ledger`(-as-table)/
+  `TrialBalance`(-as-table)/`SUBMITTED`/`APPROVED`/`REJECTED`/`Reversal`/
+  `Reverse`(-as-endpoint)/`CashAccount`/`BankAccount`/
+  `BankReconciliation`/`TaxRate`/`TaxCode`/`Currency`(-entity)/
+  `ExchangeRate`/`COGS`/`AuditLog`/`Outbox`/`BullMQ`/`Redis`(-as-app-code)
+  anywhere in `src/modules/accounting` or the modified
+  `payments.service.ts` (grepped — every match was a doc-comment
+  explicitly stating the concept does NOT exist here, or a reference to
+  the pre-existing `StockMovement`/`PaymentAllocation` precedent pattern
+  being mirrored, never real implementation). Zero mutation of
+  `SalesService`/`PurchaseOrdersService` beyond what already existed
+  before this phase (confirmed: neither file's method list changed;
+  `sales.service.ts`'s `git diff` against the last commit shows zero
+  Accounting/Journal/Ledger references anywhere in its diff). Zero
+  frontend files touched. No new npm dependencies were added (Phase 17
+  reused Phase 03/04/06/08/09/11/12/13/14/16's TypeORM/validation/
+  transaction/RBAC/organization/customer-supplier/sales/purchase/payments
+  infrastructure entirely).
+- **Not committed**: per explicit instruction, this phase's work remains
+  uncommitted in the working tree — no `git commit`, no `git push`. Phase
+  13-16's own still-uncommitted changes were left exactly as they were,
+  untouched beyond the two files this phase needed to make additive
+  changes to (`payments.service.ts`'s one new call,
+  `payment-method.entity.ts`'s one new column) and the pre-existing e2e
+  fixture/cleanup fixes described above.
+
+Known/accepted gaps carried forward:
+
+- No Sale/Purchase-to-GL posting of any kind (D6) — only Payment posts
+  automatically. A future phase adding this is expected to decide its own
+  transaction/Outbox strategy, since holding open a transaction across
+  Sale confirmation and GL posting may need different handling than
+  Payment's own single-call atomic flow.
+- No COGS/inventory valuation posting (D8).
+- No tax posting infrastructure (D17) — existing Sale/SaleItem tax
+  snapshots are not read by this phase.
+- No multi-currency (D16) — `JournalEntry`/`JournalEntryLine` carry no
+  currency column; everything posts in the Payment's own currency 1:1.
+- No reversal/correction API (D3/D21) — `JournalEntryStatus.Cancelled`
+  only reaches an unposted DRAFT.
+- No approval workflow (D2) — `DRAFT -> POSTED`/`CANCELLED` only.
+- No Cash/Bank entity (D18) — ordinary `Account` rows with
+  `accountType=ASSET`, distinguished by `PaymentMethod.glAccountId`.
+- No Outbox/event bus/background worker (D7) — Payment->GL posting is
+  synchronous by design; nothing this phase itself does needs one.
+- No reporting dashboard/Balance Sheet/P&L/Cash Flow (D20).
+- No Opening Balance generation (D11) — `JournalSourceType.OpeningBalance`
+  is reserved on the enum but nothing creates a journal with this
+  sourceType; no endpoint/trigger consumes `openingBalanceAmount`.
+- No Bruno API collection — consistent with every prior phase.
+- `@nestjs/swagger`'s transitive `js-yaml` advisory (unchanged since
+  Phase 01, dev-time only).
+
+**Next phase: Phase 18 — Outbox Pattern.** Phase 17's own Payment->GL
+posting is synchronous by construction (D7) and needs no Outbox for
+anything Phase 17 itself does — this is stated honestly as a genuinely
+weak integration contract, similar to how Phase 15's own contract into
+Phase 16 was honestly stated as weak rather than forced into existing. The
+one plausible future consumer: if a later phase adds Sale/Purchase-to-GL
+posting (explicitly out of scope for Phase 17 per D6), it may benefit from
+an Outbox to avoid holding a long-lived transaction open across Sale
+confirmation and GL posting — but that decision belongs to whichever
+phase actually builds Sale/Purchase posting, not something Phase 17 or
+Phase 18 should pre-build speculatively now.

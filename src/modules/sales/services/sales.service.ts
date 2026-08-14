@@ -12,6 +12,11 @@ import { SaleItem } from '../entities/sale-item.entity';
 import { SaleStatus } from '../entities/sale-status.enum';
 import { SaleType } from '../entities/sale-type.enum';
 import { CompanySaleCounter } from '../entities/company-sale-counter.entity';
+import { WarehouseStock } from '../../inventory/entities/warehouse-stock.entity';
+import { StockMovement } from '../../inventory/entities/stock-movement.entity';
+import { StockMovementType } from '../../inventory/entities/stock-movement-type.enum';
+import { StockMovementReferenceType } from '../../inventory/entities/stock-movement-reference-type.enum';
+import { lockWarehouseStockRow } from '../../inventory/utils/stock-lock';
 import { CreateSaleDto } from '../dto/create-sale.dto';
 import { CreateSaleItemDto } from '../dto/create-sale-item.dto';
 import { ListSalesDto } from '../dto/list-sales.dto';
@@ -605,13 +610,108 @@ export class SalesService {
     }
   }
 
-  /** DRAFT -> CONFIRMED only (Phase 12 locked decision §E). */
+  /**
+   * DRAFT -> CONFIRMED only (Phase 12 locked decision §E), extended by
+   * Phase 14 (locked decision D5) to deduct real warehouse stock as part
+   * of confirmation. Wrapped in TransactionService.run(): locks the
+   * relevant WarehouseStock rows in deterministic (productVariantId) order
+   * (upsert-then-lock, the same pattern GoodsReceipt/StockTransfer use),
+   * validates sufficient onHandQuantity for every SaleItem under the
+   * strict no-negative-stock policy (D7 — if ANY item is insufficient the
+   * whole transaction rolls back, Sale stays DRAFT, 409), decreases stock,
+   * writes one StockMovement(SALE_ISSUE) row per item, and only then flips
+   * status and saves. See docs/INVENTORY_ARCHITECTURE.md "Sales
+   * Integration" for the full cross-phase-boundary rationale.
+   *
+   * Discovered edge case (documented, resolved conservatively): Sale.
+   * warehouseId is nullable at the document level (Phase 12's own design).
+   * Since the locked Phase 14 spec unconditionally states that Sale
+   * confirmation deducts stock with no carve-out, a Sale with no
+   * warehouseId now cannot be confirmed at all — confirmation requires a
+   * resolved warehouse to issue stock from. This is an additive tightening
+   * of Sale's existing confirm() contract, not a new architectural
+   * conflict; existing Phase 12 tests that confirmed a Sale without a
+   * warehouseId were updated to supply one (see sales.service.spec.ts /
+   * test/sales.e2e-spec.ts).
+   */
   async confirm(id: string, companyId: string, userId: string): Promise<Sale> {
     const sale = await this.findByIdInCompany(id, companyId);
     this.assertTransitionAllowed(sale.status, SaleStatus.Confirmed);
-    sale.status = SaleStatus.Confirmed;
-    sale.updatedBy = userId;
-    return this.saleRepository.save(sale);
+
+    if (!sale.warehouseId) {
+      throw new AppException(
+        ErrorCode.ValidationError,
+        'Sale.warehouseId is required to confirm a sale (stock must be issued from a specific warehouse)',
+      );
+    }
+    const warehouseId = sale.warehouseId;
+    const items = sale.items ?? [];
+
+    return this.transactionService.run(async (manager) => {
+      // Deterministic lock order (sort by productVariantId) — the same
+      // upsert-then-SELECT...FOR UPDATE pattern GoodsReceipt/StockTransfer
+      // use, applied here to every distinct variant referenced by this
+      // Sale's items.
+      const sortedItems = [...items].sort((a, b) =>
+        a.productVariantId.localeCompare(b.productVariantId),
+      );
+
+      const lockedStocks = new Map<string, WarehouseStock>();
+      for (const item of sortedItems) {
+        if (lockedStocks.has(item.productVariantId)) {
+          continue;
+        }
+        const stock = await lockWarehouseStockRow(
+          manager,
+          warehouseId,
+          item.productVariantId,
+        );
+        lockedStocks.set(item.productVariantId, stock);
+      }
+
+      // Validate sufficient stock for EVERY item before mutating ANY of
+      // them — all-or-nothing, no partial deduction (D7, LOCKED).
+      for (const item of sortedItems) {
+        const stock = lockedStocks.get(item.productVariantId)!;
+        if (stock.onHandQuantity < item.quantity) {
+          throw new AppException(
+            ErrorCode.Conflict,
+            `Insufficient stock for product variant ${item.productVariantId}: requested ${item.quantity}, available ${stock.onHandQuantity}`,
+          );
+        }
+      }
+
+      // Decrease stock and write a SALE_ISSUE movement per item.
+      for (const item of sortedItems) {
+        const stock = lockedStocks.get(item.productVariantId)!;
+        stock.onHandQuantity -= item.quantity;
+        // manager.update() rather than manager.save() — an entity
+        // hydrated via createQueryBuilder().setLock().getOneOrFail()
+        // (as lockWarehouseStockRow() returns) was found, via a real
+        // e2e concurrency test in Phase 14's own GoodsReceipt flow, to
+        // sometimes make manager.save() issue a duplicate INSERT instead
+        // of an UPDATE. update() is unambiguous.
+        await manager.update(WarehouseStock, stock.id, {
+          onHandQuantity: stock.onHandQuantity,
+        });
+
+        const movement = manager.create(StockMovement, {
+          warehouseId,
+          productVariantId: item.productVariantId,
+          movementType: StockMovementType.SaleIssue,
+          quantityChange: -item.quantity,
+          quantityAfter: stock.onHandQuantity,
+          referenceType: StockMovementReferenceType.Sale,
+          referenceId: sale.id,
+          createdBy: userId,
+        });
+        await manager.save(StockMovement, movement);
+      }
+
+      sale.status = SaleStatus.Confirmed;
+      sale.updatedBy = userId;
+      return manager.save(Sale, sale);
+    });
   }
 
   /** DRAFT -> CANCELLED only (Phase 12 locked decision §E). */
@@ -621,5 +721,72 @@ export class SalesService {
     sale.status = SaleStatus.Cancelled;
     sale.updatedBy = userId;
     return this.saleRepository.save(sale);
+  }
+
+  /**
+   * Phase 16 (Payment) integration point — D16, EXPLICITLY AUTHORIZED
+   * cross-phase addition. Applies a newly-allocated payment amount to this
+   * Sale's paidAmount/balanceAmount, participating in the CALLER's
+   * transaction (never opens its own) so PaymentsService can create the
+   * Payment/PaymentAllocation rows and update every target document's
+   * balance atomically in one commit.
+   *
+   * The caller is responsible for locking the Sale row (SELECT ... FOR
+   * UPDATE) BEFORE calling this method, in the deterministic
+   * (referenceType, referenceId) order PaymentsService establishes across
+   * every target document in a single payment — this method itself only
+   * re-reads the already-locked row's current paidAmount/grandTotal inside
+   * the same lock scope and writes the new values via manager.update(),
+   * never manager.save() (the exact bug class Phase 14 found and fixed:
+   * save() on an entity hydrated via
+   * createQueryBuilder().setLock().getOneOrFail() was found, via a real
+   * e2e concurrency test, to sometimes issue a duplicate INSERT instead of
+   * an UPDATE — see confirm()'s own comment above for the original
+   * discovery). Over-allocation (new paidAmount > grandTotal) is rejected
+   * with a 409 Conflict, rolling back the caller's entire transaction — no
+   * partial balance update is ever persisted.
+   *
+   * This method does not itself lock the row — see
+   * PaymentsService.lockTargetDocuments() for the deterministic
+   * cross-document lock-ordering step this method is deliberately kept
+   * independent of, so SalesService never needs to know about
+   * PurchaseOrder or vice versa.
+   */
+  async applyPayment(
+    id: string,
+    companyId: string,
+    allocatedAmount: number,
+    userId: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    const sale = await manager
+      .createQueryBuilder(Sale, 'sale')
+      .where('sale.id = :id', { id })
+      .andWhere('sale.companyId = :companyId', { companyId })
+      .setLock('pessimistic_write')
+      .getOne();
+
+    if (!sale) {
+      throw new AppException(ErrorCode.NotFound, 'Sale not found');
+    }
+
+    const currentPaid = Number(sale.paidAmount);
+    const grandTotal = Number(sale.grandTotal);
+    const newPaid = currentPaid + allocatedAmount;
+
+    if (newPaid > grandTotal + 1e-9) {
+      throw new AppException(
+        ErrorCode.Conflict,
+        `Allocating ${allocatedAmount.toFixed(2)} to sale ${id} would exceed its grand total (already paid ${currentPaid.toFixed(2)} of ${grandTotal.toFixed(2)})`,
+      );
+    }
+
+    const newBalance = grandTotal - newPaid;
+
+    await manager.update(Sale, sale.id, {
+      paidAmount: newPaid.toFixed(2),
+      balanceAmount: newBalance.toFixed(2),
+      updatedBy: userId,
+    });
   }
 }

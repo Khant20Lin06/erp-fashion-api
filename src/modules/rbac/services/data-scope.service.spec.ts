@@ -189,4 +189,107 @@ describe('DataScopeService', () => {
       expect(result).toEqual([]);
     });
   });
+
+  describe('resolveAllowedCompanyIds', () => {
+    it('returns null for ALL scope', async () => {
+      const result = await service.resolveAllowedCompanyIds('user-1', {
+        scope: DataScope.All,
+        scopeValue: null,
+      });
+
+      expect(result).toBeNull();
+    });
+
+    it('returns active company membership ids for COMPANY scope', async () => {
+      userCompanyRepository.find.mockResolvedValue([
+        { companyId: 'company-a' } as UserCompany,
+        { companyId: 'company-b' } as UserCompany,
+      ]);
+
+      const result = await service.resolveAllowedCompanyIds('user-1', {
+        scope: DataScope.Company,
+        scopeValue: null,
+      });
+
+      expect(result).toEqual(['company-a', 'company-b']);
+    });
+
+    it('normalizes BRANCH memberships back to unique company ids', async () => {
+      userBranchRepository.find.mockResolvedValue([
+        { branch: { companyId: 'company-a' } } as UserBranch,
+        { branch: { companyId: 'company-a' } } as UserBranch,
+        { branch: { companyId: 'company-b' } } as UserBranch,
+      ]);
+
+      const result = await service.resolveAllowedCompanyIds('user-1', {
+        scope: DataScope.Branch,
+        scopeValue: null,
+      });
+
+      expect(result).toEqual(['company-a', 'company-b']);
+      expect(userBranchRepository.find).toHaveBeenCalledWith({
+        where: { userId: 'user-1', status: MembershipStatus.Active },
+        relations: { branch: true },
+      });
+    });
+
+    it('normalizes WAREHOUSE memberships back to unique company ids', async () => {
+      userWarehouseRepository.find.mockResolvedValue([
+        { warehouse: { companyId: 'company-a' } } as UserWarehouse,
+        { warehouse: { companyId: 'company-a' } } as UserWarehouse,
+      ]);
+
+      const result = await service.resolveAllowedCompanyIds('user-1', {
+        scope: DataScope.Warehouse,
+        scopeValue: null,
+      });
+
+      expect(result).toEqual(['company-a']);
+      expect(userWarehouseRepository.find).toHaveBeenCalledWith({
+        where: { userId: 'user-1', status: MembershipStatus.Active },
+        relations: { warehouse: true },
+      });
+    });
+  });
+
+  describe('resolveAllowedBranchIds', () => {
+    it('returns null for ALL and COMPANY scopes', async () => {
+      await expect(
+        service.resolveAllowedBranchIds('user-1', {
+          scope: DataScope.All,
+          scopeValue: null,
+        }),
+      ).resolves.toBeNull();
+
+      await expect(
+        service.resolveAllowedBranchIds('user-1', {
+          scope: DataScope.Company,
+          scopeValue: null,
+        }),
+      ).resolves.toBeNull();
+    });
+
+    it('returns active branch membership ids for BRANCH scope', async () => {
+      userBranchRepository.find.mockResolvedValue([
+        { branchId: 'branch-a' } as UserBranch,
+        { branchId: 'branch-b' } as UserBranch,
+      ]);
+
+      const result = await service.resolveAllowedBranchIds('user-1', {
+        scope: DataScope.Branch,
+        scopeValue: null,
+      });
+
+      expect(result).toEqual(['branch-a', 'branch-b']);
+    });
+
+    it('returns an empty array for WAREHOUSE scope', async () => {
+      const result = await service.resolveAllowedBranchIds('user-1', {
+        scope: DataScope.Warehouse,
+        scopeValue: null,
+      });
+
+      expect(result).toEqual([]);
+    });
+  });
 });

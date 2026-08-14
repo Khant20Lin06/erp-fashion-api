@@ -352,6 +352,33 @@ describeIfDb('Sales (Phase 12) (e2e)', () => {
     return Number(rows[0].c);
   }
 
+  /**
+   * Phase 14 test helper: seeds WarehouseStock via a real
+   * POST /stock-adjustments (reason: OPENING_BALANCE) so Sale confirmation
+   * (which now deducts real stock, Phase 14 locked decision D5) has
+   * sufficient onHandQuantity to succeed. Uses the SUPER_ADMIN cookie —
+   * callers needing a different actor should already hold their own
+   * cookie for the actual test action.
+   */
+  async function seedOpeningStock(
+    cookie: string,
+    companyId: string,
+    warehouseId: string,
+    productVariantId: string,
+    quantity: number,
+  ): Promise<void> {
+    await request(app.getHttpServer())
+      .post('/api/v1/stock-adjustments')
+      .set('Cookie', [cookie])
+      .send({
+        companyId,
+        warehouseId,
+        productVariantId,
+        quantityChange: quantity,
+        reason: 'OPENING_BALANCE',
+      });
+  }
+
   async function createSale(
     cookie: string,
     companyId: string,
@@ -443,6 +470,30 @@ describeIfDb('Sales (Phase 12) (e2e)', () => {
     await dataSource.query(
       `DELETE FROM price_lists WHERE code LIKE '${prefix}%'`,
     );
+    // Phase 14 addition: stock_movements/warehouse_stock/stock_adjustments/
+    // goods_receipt_items/goods_receipts/stock_transfer_items/
+    // stock_transfers all now reference product_variants and/or warehouses
+    // (RESTRICT) — must be cleared before either of those tables' own
+    // cleanup below, mirroring the Phase 09-established "children before
+    // parents" convention. This suite's seedOpeningStock() helper creates
+    // stock_adjustments rows; the others are included defensively since
+    // they share the same FK risk profile even though this suite never
+    // creates them directly.
+    await dataSource.query(
+      `DELETE FROM stock_movements WHERE product_variant_id IN (SELECT id FROM (SELECT id FROM product_variants WHERE sku LIKE '${prefix}%') t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM warehouse_stock WHERE product_variant_id IN (SELECT id FROM (SELECT id FROM product_variants WHERE sku LIKE '${prefix}%') t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM stock_adjustments WHERE product_variant_id IN (SELECT id FROM (SELECT id FROM product_variants WHERE sku LIKE '${prefix}%') t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM goods_receipt_items WHERE product_variant_id IN (SELECT id FROM (SELECT id FROM product_variants WHERE sku LIKE '${prefix}%') t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM stock_transfer_items WHERE product_variant_id IN (SELECT id FROM (SELECT id FROM product_variants WHERE sku LIKE '${prefix}%') t)`,
+    );
     await dataSource.query(
       `DELETE FROM product_variant_attributes WHERE variant_id IN (SELECT id FROM (SELECT id FROM product_variants WHERE sku LIKE '${prefix}%') t)`,
     );
@@ -455,10 +506,43 @@ describeIfDb('Sales (Phase 12) (e2e)', () => {
     );
     await dataSource.query(`DELETE FROM brands WHERE code LIKE '${prefix}%'`);
     await dataSource.query(
+      `DELETE FROM stock_movements WHERE warehouse_id IN (SELECT id FROM (SELECT id FROM warehouses WHERE company_id IN (SELECT id FROM companies WHERE code LIKE '${prefix}%')) t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM warehouse_stock WHERE warehouse_id IN (SELECT id FROM (SELECT id FROM warehouses WHERE company_id IN (SELECT id FROM companies WHERE code LIKE '${prefix}%')) t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM stock_adjustments WHERE warehouse_id IN (SELECT id FROM (SELECT id FROM warehouses WHERE company_id IN (SELECT id FROM companies WHERE code LIKE '${prefix}%')) t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM goods_receipt_items WHERE goods_receipt_id IN (SELECT id FROM (SELECT id FROM goods_receipts WHERE warehouse_id IN (SELECT id FROM warehouses WHERE company_id IN (SELECT id FROM companies WHERE code LIKE '${prefix}%'))) t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM goods_receipts WHERE warehouse_id IN (SELECT id FROM (SELECT id FROM warehouses WHERE company_id IN (SELECT id FROM companies WHERE code LIKE '${prefix}%')) t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM stock_transfer_items WHERE stock_transfer_id IN (SELECT id FROM (SELECT id FROM stock_transfers WHERE source_warehouse_id IN (SELECT id FROM warehouses WHERE company_id IN (SELECT id FROM companies WHERE code LIKE '${prefix}%'))) t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM stock_transfers WHERE source_warehouse_id IN (SELECT id FROM (SELECT id FROM warehouses WHERE company_id IN (SELECT id FROM companies WHERE code LIKE '${prefix}%')) t)`,
+    );
+    await dataSource.query(
       `DELETE FROM warehouses WHERE company_id IN (SELECT id FROM (SELECT id FROM companies WHERE code LIKE '${prefix}%') t)`,
     );
     await dataSource.query(
       `DELETE FROM branches WHERE company_id IN (SELECT id FROM (SELECT id FROM companies WHERE code LIKE '${prefix}%') t)`,
+    );
+    // Phase 14 addition: the three per-company document counter tables
+    // reference companies directly (RESTRICT) — must be cleared before
+    // the companies delete below.
+    await dataSource.query(
+      `DELETE FROM company_goods_receipt_counters WHERE company_id IN (SELECT id FROM (SELECT id FROM companies WHERE code LIKE '${prefix}%') t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM company_stock_transfer_counters WHERE company_id IN (SELECT id FROM (SELECT id FROM companies WHERE code LIKE '${prefix}%') t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM company_stock_adjustment_counters WHERE company_id IN (SELECT id FROM (SELECT id FROM companies WHERE code LIKE '${prefix}%') t)`,
     );
     await dataSource.query(
       `DELETE FROM companies WHERE code LIKE '${prefix}%'`,
@@ -539,6 +623,25 @@ describeIfDb('Sales (Phase 12) (e2e)', () => {
     await dataSource.query(
       `DELETE FROM price_lists WHERE code LIKE '${prefix}%'`,
     );
+    // Phase 14 addition: stock_movements/warehouse_stock/stock_adjustments/
+    // goods_receipt_items/stock_transfer_items all reference
+    // product_variants and/or warehouses (RESTRICT) — must be cleared
+    // before either of those tables' own cleanup below.
+    await dataSource.query(
+      `DELETE FROM stock_movements WHERE product_variant_id IN (SELECT id FROM (SELECT id FROM product_variants WHERE sku LIKE '${prefix}%') t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM warehouse_stock WHERE product_variant_id IN (SELECT id FROM (SELECT id FROM product_variants WHERE sku LIKE '${prefix}%') t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM stock_adjustments WHERE product_variant_id IN (SELECT id FROM (SELECT id FROM product_variants WHERE sku LIKE '${prefix}%') t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM goods_receipt_items WHERE product_variant_id IN (SELECT id FROM (SELECT id FROM product_variants WHERE sku LIKE '${prefix}%') t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM stock_transfer_items WHERE product_variant_id IN (SELECT id FROM (SELECT id FROM product_variants WHERE sku LIKE '${prefix}%') t)`,
+    );
     await dataSource.query(
       `DELETE FROM product_variant_attributes WHERE variant_id IN (SELECT id FROM (SELECT id FROM product_variants WHERE sku LIKE '${prefix}%') t)`,
     );
@@ -551,10 +654,43 @@ describeIfDb('Sales (Phase 12) (e2e)', () => {
     );
     await dataSource.query(`DELETE FROM brands WHERE code LIKE '${prefix}%'`);
     await dataSource.query(
+      `DELETE FROM stock_movements WHERE warehouse_id IN (SELECT id FROM (SELECT id FROM warehouses WHERE company_id IN (SELECT id FROM companies WHERE code LIKE '${prefix}%')) t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM warehouse_stock WHERE warehouse_id IN (SELECT id FROM (SELECT id FROM warehouses WHERE company_id IN (SELECT id FROM companies WHERE code LIKE '${prefix}%')) t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM stock_adjustments WHERE warehouse_id IN (SELECT id FROM (SELECT id FROM warehouses WHERE company_id IN (SELECT id FROM companies WHERE code LIKE '${prefix}%')) t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM goods_receipt_items WHERE goods_receipt_id IN (SELECT id FROM (SELECT id FROM goods_receipts WHERE warehouse_id IN (SELECT id FROM warehouses WHERE company_id IN (SELECT id FROM companies WHERE code LIKE '${prefix}%'))) t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM goods_receipts WHERE warehouse_id IN (SELECT id FROM (SELECT id FROM warehouses WHERE company_id IN (SELECT id FROM companies WHERE code LIKE '${prefix}%')) t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM stock_transfer_items WHERE stock_transfer_id IN (SELECT id FROM (SELECT id FROM stock_transfers WHERE source_warehouse_id IN (SELECT id FROM warehouses WHERE company_id IN (SELECT id FROM companies WHERE code LIKE '${prefix}%'))) t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM stock_transfers WHERE source_warehouse_id IN (SELECT id FROM (SELECT id FROM warehouses WHERE company_id IN (SELECT id FROM companies WHERE code LIKE '${prefix}%')) t)`,
+    );
+    await dataSource.query(
       `DELETE FROM warehouses WHERE company_id IN (SELECT id FROM (SELECT id FROM companies WHERE code LIKE '${prefix}%') t)`,
     );
     await dataSource.query(
       `DELETE FROM branches WHERE company_id IN (SELECT id FROM (SELECT id FROM companies WHERE code LIKE '${prefix}%') t)`,
+    );
+    // Phase 14 addition: the three per-company document counter tables
+    // reference companies directly (RESTRICT) — must be cleared before
+    // the companies delete below.
+    await dataSource.query(
+      `DELETE FROM company_goods_receipt_counters WHERE company_id IN (SELECT id FROM (SELECT id FROM companies WHERE code LIKE '${prefix}%') t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM company_stock_transfer_counters WHERE company_id IN (SELECT id FROM (SELECT id FROM companies WHERE code LIKE '${prefix}%') t)`,
+    );
+    await dataSource.query(
+      `DELETE FROM company_stock_adjustment_counters WHERE company_id IN (SELECT id FROM (SELECT id FROM companies WHERE code LIKE '${prefix}%') t)`,
     );
     await dataSource.query(
       `DELETE FROM companies WHERE code LIKE '${prefix}%'`,
@@ -1115,12 +1251,18 @@ describeIfDb('Sales (Phase 12) (e2e)', () => {
   });
 
   describe('lifecycle: DRAFT -> CONFIRMED / CANCELLED', () => {
-    it('confirms a DRAFT sale', async () => {
+    it('confirms a DRAFT sale and deducts stock (Phase 14 D5)', async () => {
       const cookie = await loginAndGetCookie(superAdminUser.email);
-      const { company, variant, customer } = await setupBaseFixture(cookie);
-      const saleResponse = await createSale(cookie, company.id, customer.id, [
-        { productVariantId: variant.id, quantity: 1 },
-      ]);
+      const { company, warehouse, variant, customer } =
+        await setupBaseFixture(cookie);
+      await seedOpeningStock(cookie, company.id, warehouse.id, variant.id, 10);
+      const saleResponse = await createSale(
+        cookie,
+        company.id,
+        customer.id,
+        [{ productVariantId: variant.id, quantity: 1 }],
+        { warehouseId: warehouse.id },
+      );
       const sale = saleResponse.body as SaleBody;
 
       const response = await request(app.getHttpServer())
@@ -1129,6 +1271,128 @@ describeIfDb('Sales (Phase 12) (e2e)', () => {
 
       expect(response.status).toBe(200);
       expect((response.body as SaleBody).status).toBe('CONFIRMED');
+
+      const stockResponse = await request(app.getHttpServer())
+        .get(
+          `/api/v1/warehouse-stock?companyId=${company.id}&warehouseId=${warehouse.id}&productVariantId=${variant.id}`,
+        )
+        .set('Cookie', [cookie]);
+      const stockBody = stockResponse.body as {
+        data: Array<{ onHandQuantity: number }>;
+      };
+      expect(stockBody.data[0]?.onHandQuantity).toBe(9);
+    });
+
+    it('rejects confirmation with 409 when stock is insufficient, leaving the sale in DRAFT', async () => {
+      const cookie = await loginAndGetCookie(superAdminUser.email);
+      const { company, warehouse, variant, customer } =
+        await setupBaseFixture(cookie);
+      await seedOpeningStock(cookie, company.id, warehouse.id, variant.id, 1);
+      const saleResponse = await createSale(
+        cookie,
+        company.id,
+        customer.id,
+        [{ productVariantId: variant.id, quantity: 5 }],
+        { warehouseId: warehouse.id },
+      );
+      const sale = saleResponse.body as SaleBody;
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/v1/sales/${sale.id}/confirm?companyId=${company.id}`)
+        .set('Cookie', [cookie]);
+
+      expect(response.status).toBe(409);
+
+      const refetched = await request(app.getHttpServer())
+        .get(`/api/v1/sales/${sale.id}?companyId=${company.id}`)
+        .set('Cookie', [cookie]);
+      expect((refetched.body as SaleBody).status).toBe('DRAFT');
+    });
+
+    it('rejects confirmation when Sale.warehouseId is null (400)', async () => {
+      const cookie = await loginAndGetCookie(superAdminUser.email);
+      const { company, variant, customer } = await setupBaseFixture(cookie);
+      const saleResponse = await createSale(cookie, company.id, customer.id, [
+        { productVariantId: variant.id, quantity: 1 },
+      ]);
+      const sale = saleResponse.body as SaleBody;
+      expect(sale.warehouseId).toBeNull();
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/v1/sales/${sale.id}/confirm?companyId=${company.id}`)
+        .set('Cookie', [cookie]);
+
+      expect(response.status).toBe(400);
+    });
+
+    it('a multi-item sale confirmation is atomic: one insufficient item rolls back the whole thing (no partial deduction)', async () => {
+      const cookie = await loginAndGetCookie(superAdminUser.email);
+      const { company, warehouse, category, brand, customer, priceList } =
+        await setupBaseFixture(cookie);
+      // Reuse setupBaseFixture's own single active price list — creating a
+      // second one here would trigger Sale's own "ambiguous price list"
+      // 400 rejection (Phase 12 locked rule: exactly one company ACTIVE
+      // price list resolves automatically, otherwise priceListId is
+      // required per item).
+      const variant2 = await createProductVariant(
+        cookie,
+        company.id,
+        category.id,
+        brand.id,
+      );
+      await createActivePriceListItem(
+        cookie,
+        company.id,
+        priceList.id,
+        variant2.id,
+        '50.00',
+      );
+
+      await seedOpeningStock(cookie, company.id, warehouse.id, variant2.id, 1);
+      // No stock seeded at all for a second, brand-new variant — guaranteed
+      // insufficient (0 available).
+      const variant3 = await createProductVariant(
+        cookie,
+        company.id,
+        category.id,
+        brand.id,
+      );
+      await createActivePriceListItem(
+        cookie,
+        company.id,
+        priceList.id,
+        variant3.id,
+        '20.00',
+      );
+
+      const saleResponse = await createSale(
+        cookie,
+        company.id,
+        customer.id,
+        [
+          { productVariantId: variant2.id, quantity: 1 },
+          { productVariantId: variant3.id, quantity: 1 },
+        ],
+        { warehouseId: warehouse.id },
+      );
+      const sale = saleResponse.body as SaleBody;
+
+      const response = await request(app.getHttpServer())
+        .post(`/api/v1/sales/${sale.id}/confirm?companyId=${company.id}`)
+        .set('Cookie', [cookie]);
+
+      expect(response.status).toBe(409);
+
+      // variant2's stock must remain untouched (1) — proving atomicity.
+      const stockResponse = await request(app.getHttpServer())
+        .get(
+          `/api/v1/warehouse-stock?companyId=${company.id}&warehouseId=${warehouse.id}&productVariantId=${variant2.id}`,
+        )
+        .set('Cookie', [cookie]);
+      const stockBody = stockResponse.body as {
+        data: Array<{ onHandQuantity: number }>;
+      };
+      expect(stockBody.data[0]?.onHandQuantity).toBe(1);
     });
 
     it('cancels a DRAFT sale', async () => {
@@ -1149,10 +1413,16 @@ describeIfDb('Sales (Phase 12) (e2e)', () => {
 
     it('rejects CONFIRMED -> CANCELLED (409)', async () => {
       const cookie = await loginAndGetCookie(superAdminUser.email);
-      const { company, variant, customer } = await setupBaseFixture(cookie);
-      const saleResponse = await createSale(cookie, company.id, customer.id, [
-        { productVariantId: variant.id, quantity: 1 },
-      ]);
+      const { company, warehouse, variant, customer } =
+        await setupBaseFixture(cookie);
+      await seedOpeningStock(cookie, company.id, warehouse.id, variant.id, 10);
+      const saleResponse = await createSale(
+        cookie,
+        company.id,
+        customer.id,
+        [{ productVariantId: variant.id, quantity: 1 }],
+        { warehouseId: warehouse.id },
+      );
       const sale = saleResponse.body as SaleBody;
       await request(app.getHttpServer())
         .post(`/api/v1/sales/${sale.id}/confirm?companyId=${company.id}`)
@@ -1167,10 +1437,16 @@ describeIfDb('Sales (Phase 12) (e2e)', () => {
 
     it('rejects re-confirming an already-CONFIRMED sale (409)', async () => {
       const cookie = await loginAndGetCookie(superAdminUser.email);
-      const { company, variant, customer } = await setupBaseFixture(cookie);
-      const saleResponse = await createSale(cookie, company.id, customer.id, [
-        { productVariantId: variant.id, quantity: 1 },
-      ]);
+      const { company, warehouse, variant, customer } =
+        await setupBaseFixture(cookie);
+      await seedOpeningStock(cookie, company.id, warehouse.id, variant.id, 10);
+      const saleResponse = await createSale(
+        cookie,
+        company.id,
+        customer.id,
+        [{ productVariantId: variant.id, quantity: 1 }],
+        { warehouseId: warehouse.id },
+      );
       const sale = saleResponse.body as SaleBody;
       await request(app.getHttpServer())
         .post(`/api/v1/sales/${sale.id}/confirm?companyId=${company.id}`)
@@ -1239,10 +1515,16 @@ describeIfDb('Sales (Phase 12) (e2e)', () => {
   describe('confirmed-sale immutability', () => {
     it('a CONFIRMED sale retains its original financial values (no update path exists to change them)', async () => {
       const cookie = await loginAndGetCookie(superAdminUser.email);
-      const { company, variant, customer } = await setupBaseFixture(cookie);
-      const saleResponse = await createSale(cookie, company.id, customer.id, [
-        { productVariantId: variant.id, quantity: 1 },
-      ]);
+      const { company, warehouse, variant, customer } =
+        await setupBaseFixture(cookie);
+      await seedOpeningStock(cookie, company.id, warehouse.id, variant.id, 10);
+      const saleResponse = await createSale(
+        cookie,
+        company.id,
+        customer.id,
+        [{ productVariantId: variant.id, quantity: 1 }],
+        { warehouseId: warehouse.id },
+      );
       const sale = saleResponse.body as SaleBody;
       await request(app.getHttpServer())
         .post(`/api/v1/sales/${sale.id}/confirm?companyId=${company.id}`)

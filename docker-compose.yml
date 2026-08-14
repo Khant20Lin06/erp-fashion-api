@@ -15,6 +15,7 @@ services:
       DB_PORT: 3306
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      KAFKA_BROKERS: kafka:9092
     volumes:
       - .:/usr/src/app
       - api_node_modules:/usr/src/app/node_modules
@@ -22,6 +23,8 @@ services:
       mysql:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     networks:
       - fashion-erp-network
@@ -75,6 +78,42 @@ services:
     networks:
       - fashion-erp-network
 
+  # Phase 18 — Kafka in KRaft mode (no ZooKeeper). Single-broker,
+  # single-node controller+broker combo, sufficient for local dev/test.
+  # apache/kafka is the official Apache Kafka project image (published
+  # since 3.7), KRaft-only by design — no separate format/storage step to
+  # script by hand, and no third-party registry dependency.
+  kafka:
+    image: apache/kafka:3.9.0
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 0
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:${KAFKA_HOST_PORT:-9094}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "${KAFKA_HOST_PORT:-9094}:9094"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+    networks:
+      - fashion-erp-network
+
 networks:
   fashion-erp-network:
     driver: bridge
@@ -82,4 +121,5 @@ networks:
 volumes:
   mysql_data:
   redis_data:
+  kafka_data:
   api_node_modules:

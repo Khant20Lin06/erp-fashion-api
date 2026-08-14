@@ -13,6 +13,7 @@ interface ValidatedEnv {
   DB_USERNAME: string;
   DB_PASSWORD: string;
   DB_DATABASE: string;
+  REDIS_URL?: string;
 }
 
 const requiredDbEnv = {
@@ -100,5 +101,15 @@ describe('envValidationSchema', () => {
     expect(value.NODE_ENV).toBe('production');
     expect(value.PORT).toBe(8080);
     expect(value.DB_HOST).toBe('mysql');
+  });
+
+  it('should accept REDIS_URL when provided', () => {
+    const { error, value } = envValidationSchema.validate({
+      ...requiredDbEnv,
+      REDIS_URL: 'redis://cache.example.com:6380/2',
+    }) as { error: unknown; value: ValidatedEnv };
+
+    expect(error).toBeUndefined();
+    expect(value.REDIS_URL).toBe('redis://cache.example.com:6380/2');
   });
 });

@@ -4,6 +4,9 @@ import { LoggerModule } from 'nestjs-pino';
 import appConfig from './config/app.config';
 import databaseConfig from './config/database.config';
 import authConfig from './config/auth.config';
+import kafkaConfig from './config/kafka.config';
+import outboxConfig from './config/outbox.config';
+import redisConfig from './config/redis.config';
 import { envValidationSchema } from './config/env.validation';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { HealthModule } from './health/health.module';
@@ -22,12 +25,29 @@ import { MasterDataModule } from './modules/master-data/master-data.module';
 import { ProductsModule } from './modules/products/products.module';
 import { CustomerSupplierModule } from './modules/customer-supplier/customer-supplier.module';
 import { SalesModule } from './modules/sales/sales.module';
+import { PurchaseModule } from './modules/purchase/purchase.module';
+import { InventoryModule } from './modules/inventory/inventory.module';
+import { PaymentsModule } from './modules/payments/payments.module';
+import { AccountingModule } from './modules/accounting/accounting.module';
+import { KafkaModule } from './modules/kafka/kafka.module';
+import { OutboxModule } from './modules/outbox/outbox.module';
+import { RedisModule } from './modules/redis/redis.module';
+import { QueueModule } from './modules/queue/queue.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
+import { ReportsModule } from './modules/reports/reports.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, databaseConfig, authConfig],
+      load: [
+        appConfig,
+        databaseConfig,
+        authConfig,
+        kafkaConfig,
+        outboxConfig,
+        redisConfig,
+      ],
       validationSchema: envValidationSchema,
       validationOptions: {
         abortEarly: false,
@@ -40,6 +60,10 @@ import { SalesModule } from './modules/sales/sales.module';
     DatabaseModule,
     RequestContextModule,
     TransactionModule,
+    RedisModule,
+    QueueModule,
+    KafkaModule,
+    OutboxModule,
     HealthModule,
     UsersModule,
     AuthModule,
@@ -51,6 +75,12 @@ import { SalesModule } from './modules/sales/sales.module';
     ProductsModule,
     CustomerSupplierModule,
     SalesModule,
+    PurchaseModule,
+    InventoryModule,
+    PaymentsModule,
+    AccountingModule,
+    NotificationsModule,
+    ReportsModule,
   ],
 })
 export class AppModule implements NestModule {

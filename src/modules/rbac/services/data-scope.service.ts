@@ -137,4 +137,77 @@ export class DataScopeService {
 
     return [];
   }
+
+  /**
+   * Resolves the COMPANY ids a user may operate against for the already-
+   * resolved scope. Unlike resolveAllowedOrganizationIds(), this method
+   * normalizes branch/warehouse memberships back up to their parent company
+   * ids, which is the key thing request-level company resolution needs.
+   */
+  async resolveAllowedCompanyIds(
+    userId: string,
+    resolved: ResolvedScope,
+  ): Promise<string[] | null> {
+    if (resolved.scope === DataScope.All) {
+      return null;
+    }
+
+    if (resolved.scope === DataScope.Company) {
+      const memberships = await this.userCompanyRepository.find({
+        where: { userId, status: MembershipStatus.Active },
+      });
+      return memberships.map((membership) => membership.companyId);
+    }
+
+    if (resolved.scope === DataScope.Branch) {
+      const memberships = await this.userBranchRepository.find({
+        where: { userId, status: MembershipStatus.Active },
+        relations: { branch: true },
+      });
+      return Array.from(
+        new Set(memberships.map((membership) => membership.branch.companyId)),
+      );
+    }
+
+    if (resolved.scope === DataScope.Warehouse) {
+      const memberships = await this.userWarehouseRepository.find({
+        where: { userId, status: MembershipStatus.Active },
+        relations: { warehouse: true },
+      });
+      return Array.from(
+        new Set(
+          memberships.map((membership) => membership.warehouse.companyId),
+        ),
+      );
+    }
+
+    return [];
+  }
+
+  /**
+   * Resolves branch ids a user may see for a resource whose rows are branch-
+   * scoped. ALL / COMPANY return null (no branch-level restriction needed at
+   * this layer). WAREHOUSE intentionally returns an empty array rather than
+   * broadening warehouse access to entire branches.
+   */
+  async resolveAllowedBranchIds(
+    userId: string,
+    resolved: ResolvedScope,
+  ): Promise<string[] | null> {
+    if (
+      resolved.scope === DataScope.All ||
+      resolved.scope === DataScope.Company
+    ) {
+      return null;
+    }
+
+    if (resolved.scope === DataScope.Branch) {
+      const memberships = await this.userBranchRepository.find({
+        where: { userId, status: MembershipStatus.Active },
+      });
+      return memberships.map((membership) => membership.branchId);
+    }
+
+    return [];
+  }
 }

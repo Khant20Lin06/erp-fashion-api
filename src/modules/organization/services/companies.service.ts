@@ -14,6 +14,8 @@ import {
   PaginationDto,
 } from '../../../shared/dto/pagination.dto';
 import { resolveSortField } from '../../../shared/dto/resolve-sort-field';
+import { CacheService } from '../../redis/cache.service';
+import { CacheKeys, CacheTtl } from '../../redis/cache-keys';
 
 export interface PaginatedCompanies {
   data: Company[];
@@ -22,6 +24,16 @@ export interface PaginatedCompanies {
 
 const SORTABLE_FIELDS = ['createdAt', 'name', 'code', 'status'] as const;
 
+/**
+ * Phase 19 addition: Company doubles as this codebase's "company settings"
+ * record (there is no separate CompanySettings entity — Company's own
+ * baseCurrency/timezone/country/phone/email/address fields ARE the
+ * settings), so findById() — its single-row read path, used by every other
+ * module that needs a company's settings — is the cache candidate the
+ * locked spec calls "Company settings." Cache-aside: read-through on miss,
+ * explicit delete-on-write in update()/activate()/deactivate()/remove(),
+ * always AFTER the DB write commits.
+ */
 @Injectable()
 export class CompaniesService {
   constructor(
@@ -29,6 +41,7 @@ export class CompaniesService {
     private readonly companyRepository: Repository<Company>,
     @InjectRepository(Branch)
     private readonly branchRepository: Repository<Branch>,
+    private readonly cacheService: CacheService,
   ) {}
 
   async findAll(pagination: PaginationDto): Promise<PaginatedCompanies> {
@@ -50,10 +63,22 @@ export class CompaniesService {
   }
 
   async findById(id: string): Promise<Company> {
+    const cacheKey = CacheKeys.companySettings(id);
+    const cached = await this.cacheService.get<Company>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const company = await this.companyRepository.findOne({ where: { id } });
     if (!company) {
       throw new AppException(ErrorCode.NotFound, 'Company not found');
     }
+
+    await this.cacheService.set(
+      cacheKey,
+      company,
+      CacheTtl.COMPANY_SETTINGS_SECONDS,
+    );
     return company;
   }
 
@@ -103,19 +128,25 @@ export class CompaniesService {
     if (dto.email !== undefined) company.email = dto.email;
     if (dto.address !== undefined) company.address = dto.address;
 
-    return this.companyRepository.save(company);
+    const saved = await this.companyRepository.save(company);
+    await this.cacheService.delete(CacheKeys.companySettings(id));
+    return saved;
   }
 
   async activate(id: string): Promise<Company> {
     const company = await this.findById(id);
     company.status = CompanyStatus.Active;
-    return this.companyRepository.save(company);
+    const saved = await this.companyRepository.save(company);
+    await this.cacheService.delete(CacheKeys.companySettings(id));
+    return saved;
   }
 
   async deactivate(id: string): Promise<Company> {
     const company = await this.findById(id);
     company.status = CompanyStatus.Inactive;
-    return this.companyRepository.save(company);
+    const saved = await this.companyRepository.save(company);
+    await this.cacheService.delete(CacheKeys.companySettings(id));
+    return saved;
   }
 
   /**
@@ -139,5 +170,6 @@ export class CompaniesService {
     }
 
     await this.companyRepository.softRemove(company);
+    await this.cacheService.delete(CacheKeys.companySettings(id));
   }
 }

@@ -45,4 +45,26 @@ export const envValidationSchema = Joi.object({
     .integer()
     .min(1)
     .default(30),
+
+  // Kafka (Phase 18 — event transport only, never the source of truth).
+  // Never hardcode a broker address in application code — always read
+  // these through ConfigService.
+  KAFKA_BROKERS: Joi.string().default('localhost:9092'),
+  KAFKA_CLIENT_ID: Joi.string().default('fashion-erp-api'),
+  KAFKA_GROUP_ID: Joi.string().default('erp-payment-audit-consumer'),
+
+  // Outbox publisher (Phase 18) — polling interval / batch size for the
+  // @nestjs/schedule-driven OutboxPublisher.
+  OUTBOX_POLL_INTERVAL_MS: Joi.number().integer().min(100).default(5000),
+  OUTBOX_BATCH_SIZE: Joi.number().integer().min(1).max(500).default(50),
+
+  // Redis (Phase 19 — cache only, never a source of truth; also reused as
+  // the BullMQ connection in Phase 20). REDIS_PASSWORD is optional since
+  // the local docker-compose redis service runs without auth; REDIS_DB
+  // defaults to logical DB 0.
+  REDIS_URL: Joi.string().uri().optional(),
+  REDIS_HOST: Joi.string().default('localhost'),
+  REDIS_PORT: Joi.number().port().default(6379),
+  REDIS_PASSWORD: Joi.string().allow('').optional(),
+  REDIS_DB: Joi.number().integer().min(0).max(15).default(0),
 });

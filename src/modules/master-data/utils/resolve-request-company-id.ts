@@ -26,8 +26,10 @@ export async function resolveRequestCompanyId(
     );
   }
 
-  const allowedCompanyIds =
-    await dataScopeService.resolveAllowedOrganizationIds(userId, resolved);
+  const allowedCompanyIds = await dataScopeService.resolveAllowedCompanyIds(
+    userId,
+    resolved,
+  );
 
   // null means ALL scope — unrestricted, but a target companyId is still
   // required to know which company's data to operate on.

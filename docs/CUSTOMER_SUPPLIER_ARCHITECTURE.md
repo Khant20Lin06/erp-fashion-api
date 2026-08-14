@@ -1,5 +1,10 @@
 # CUSTOMER_SUPPLIER_ARCHITECTURE.md
 
+Current-state note as of Friday, August 14, 2026: this document preserves
+the original Phase 11 boundary language. Later implemented phases already
+supersede statements here that treat Sales, Purchase, Payment, Accounting,
+Outbox/Kafka, Redis/BullMQ, Notifications, or Reports as future work.
+
 Customer, Supplier, CustomerGroup, SupplierGroup, PaymentTerm,
 CustomerAddress, SupplierAddress, CustomerContact, and SupplierContact
 implemented in Phase 11 (`src/modules/customer-supplier/`). Sales,

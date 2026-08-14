@@ -52,6 +52,7 @@ describe('SalesService', () => {
     find: jest.Mock;
     create: jest.Mock;
     save: jest.Mock;
+    update: jest.Mock;
     query: jest.Mock;
     createQueryBuilder: jest.Mock;
   }
@@ -126,6 +127,7 @@ describe('SalesService', () => {
       find: jest.fn(),
       create: jest.fn((_entity: unknown, data: unknown) => data),
       save: jest.fn((_entity: unknown, data: unknown) => Promise.resolve(data)),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
       query: jest.fn(),
       createQueryBuilder: jest.fn().mockReturnValue(managerQueryBuilder),
     };
@@ -390,21 +392,90 @@ describe('SalesService', () => {
         id: 'sale-1',
         companyId: 'company-a',
         status: SaleStatus.Draft,
+        warehouseId: 'wh-1',
+        items: [{ productVariantId: 'variant-1', quantity: 2 }],
         ...overrides,
       }) as Sale;
 
-    it('allows DRAFT -> CONFIRMED', async () => {
+    const buildStock = (overrides: Record<string, unknown> = {}) =>
+      ({
+        id: 'stock-1',
+        warehouseId: 'wh-1',
+        productVariantId: 'variant-1',
+        onHandQuantity: 10,
+        reservedQuantity: 0,
+        ...overrides,
+      }) as never;
+
+    it('allows DRAFT -> CONFIRMED and deducts stock (Phase 14 D5)', async () => {
       saleRepository.findOne.mockResolvedValue(buildSale());
-      saleRepository.save.mockImplementation((input) =>
-        Promise.resolve(input as Sale),
+      managerQueryBuilder.getOneOrFail.mockResolvedValue(buildStock());
+      manager.save.mockImplementation((_entity: unknown, data: unknown) =>
+        Promise.resolve(data),
       );
 
       const result = await service.confirm('sale-1', 'company-a', 'user-1');
 
       expect(result.status).toBe(SaleStatus.Confirmed);
+      expect(managerQueryBuilder.setLock).toHaveBeenCalledWith(
+        'pessimistic_write',
+      );
     });
 
-    it('allows DRAFT -> CANCELLED', async () => {
+    it('rejects confirmation when Sale.warehouseId is null (stock issue requires a warehouse)', async () => {
+      saleRepository.findOne.mockResolvedValue(
+        buildSale({ warehouseId: null }),
+      );
+
+      await expect(
+        service.confirm('sale-1', 'company-a', 'user-1'),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.ValidationError });
+      expect(transactionService.run).not.toHaveBeenCalled();
+    });
+
+    it('rejects confirmation with 409 and performs no stock mutation when onHandQuantity is insufficient for an item', async () => {
+      saleRepository.findOne.mockResolvedValue(buildSale());
+      managerQueryBuilder.getOneOrFail.mockResolvedValue(
+        buildStock({ onHandQuantity: 1 }),
+      );
+
+      await expect(
+        service.confirm('sale-1', 'company-a', 'user-1'),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.Conflict });
+      expect(manager.save).not.toHaveBeenCalled();
+    });
+
+    it('rolls back the whole confirmation atomically when one of multiple items is insufficient', async () => {
+      saleRepository.findOne.mockResolvedValue(
+        buildSale({
+          items: [
+            { productVariantId: 'variant-1', quantity: 2 },
+            { productVariantId: 'variant-2', quantity: 100 },
+          ],
+        }),
+      );
+      managerQueryBuilder.getOneOrFail.mockImplementation(() => {
+        // First lock call resolves variant-1 (sufficient), second resolves
+        // variant-2 (insufficient) — both are locked before either is
+        // validated, proving all-or-nothing behavior.
+        const callIndex = managerQueryBuilder.getOneOrFail.mock.calls.length;
+        return Promise.resolve(
+          callIndex === 1
+            ? buildStock({ productVariantId: 'variant-1', onHandQuantity: 10 })
+            : buildStock({
+                productVariantId: 'variant-2',
+                onHandQuantity: 5,
+              }),
+        );
+      });
+
+      await expect(
+        service.confirm('sale-1', 'company-a', 'user-1'),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.Conflict });
+      expect(manager.save).not.toHaveBeenCalled();
+    });
+
+    it('allows DRAFT -> CANCELLED (no stock mutation, unchanged from Phase 12)', async () => {
       saleRepository.findOne.mockResolvedValue(buildSale());
       saleRepository.save.mockImplementation((input) =>
         Promise.resolve(input as Sale),
@@ -413,6 +484,7 @@ describe('SalesService', () => {
       const result = await service.cancel('sale-1', 'company-a', 'user-1');
 
       expect(result.status).toBe(SaleStatus.Cancelled);
+      expect(transactionService.run).not.toHaveBeenCalled();
     });
 
     it('rejects CONFIRMED -> CANCELLED with a 409 conflict', async () => {
@@ -463,6 +535,134 @@ describe('SalesService', () => {
       await expect(
         service.findByIdInCompany('sale-1', 'company-b'),
       ).rejects.toMatchObject({ errorCode: ErrorCode.NotFound });
+    });
+  });
+
+  /**
+   * Phase 16 (Payment) integration point — D16, EXPLICITLY AUTHORIZED
+   * cross-phase addition. applyPayment() is the ONLY new method added to
+   * this file; every other describe() block above exercises pre-existing,
+   * untouched behavior (create/confirm/cancel/findByIdInCompany).
+   */
+  describe('applyPayment (Phase 16 integration point)', () => {
+    const buildSale = (overrides: Record<string, unknown> = {}) =>
+      ({
+        id: 'sale-1',
+        companyId: 'company-a',
+        status: SaleStatus.Confirmed,
+        paidAmount: '0.00',
+        grandTotal: '100.00',
+        ...overrides,
+      }) as Sale;
+
+    let applyManagerQueryBuilder: {
+      where: jest.Mock;
+      andWhere: jest.Mock;
+      setLock: jest.Mock;
+      getOne: jest.Mock;
+    };
+
+    beforeEach(() => {
+      applyManagerQueryBuilder = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        setLock: jest.fn().mockReturnThis(),
+        getOne: jest.fn(),
+      };
+      manager.createQueryBuilder.mockReturnValue(applyManagerQueryBuilder);
+    });
+
+    it('locks the sale row with pessimistic_write before reading it', async () => {
+      applyManagerQueryBuilder.getOne.mockResolvedValue(
+        buildSale({ paidAmount: '0.00', grandTotal: '100.00' }),
+      );
+
+      await service.applyPayment(
+        'sale-1',
+        'company-a',
+        40,
+        'user-1',
+        manager as unknown as EntityManager,
+      );
+
+      expect(applyManagerQueryBuilder.setLock).toHaveBeenCalledWith(
+        'pessimistic_write',
+      );
+    });
+
+    it('throws NotFound when the sale does not exist in the company', async () => {
+      applyManagerQueryBuilder.getOne.mockResolvedValue(null);
+
+      await expect(
+        service.applyPayment(
+          'sale-1',
+          'company-a',
+          40,
+          'user-1',
+          manager as unknown as EntityManager,
+        ),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.NotFound });
+    });
+
+    it('adds the allocated amount to paidAmount and recomputes balanceAmount via manager.update()', async () => {
+      applyManagerQueryBuilder.getOne.mockResolvedValue(
+        buildSale({ id: 'sale-1', paidAmount: '20.00', grandTotal: '100.00' }),
+      );
+
+      await service.applyPayment(
+        'sale-1',
+        'company-a',
+        30,
+        'user-1',
+        manager as unknown as EntityManager,
+      );
+
+      // manager.update() — never manager.save() — on the lock-hydrated
+      // entity, the exact Phase 14-discovered bug class this method's
+      // docblock documents avoiding.
+      expect(manager.update).toHaveBeenCalledWith(Sale, 'sale-1', {
+        paidAmount: '50.00',
+        balanceAmount: '50.00',
+        updatedBy: 'user-1',
+      });
+    });
+
+    it('fully pays off a sale (paidAmount === grandTotal -> balanceAmount 0.00)', async () => {
+      applyManagerQueryBuilder.getOne.mockResolvedValue(
+        buildSale({ id: 'sale-1', paidAmount: '0.00', grandTotal: '75.00' }),
+      );
+
+      await service.applyPayment(
+        'sale-1',
+        'company-a',
+        75,
+        'user-1',
+        manager as unknown as EntityManager,
+      );
+
+      expect(manager.update).toHaveBeenCalledWith(Sale, 'sale-1', {
+        paidAmount: '75.00',
+        balanceAmount: '0.00',
+        updatedBy: 'user-1',
+      });
+    });
+
+    it('rejects over-allocation (new paidAmount > grandTotal) with 409 Conflict', async () => {
+      applyManagerQueryBuilder.getOne.mockResolvedValue(
+        buildSale({ id: 'sale-1', paidAmount: '80.00', grandTotal: '100.00' }),
+      );
+
+      await expect(
+        service.applyPayment(
+          'sale-1',
+          'company-a',
+          30,
+          'user-1',
+          manager as unknown as EntityManager,
+        ),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.Conflict });
+
+      expect(manager.update).not.toHaveBeenCalled();
     });
   });
 });

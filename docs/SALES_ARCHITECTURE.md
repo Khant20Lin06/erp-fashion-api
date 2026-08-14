@@ -1,5 +1,10 @@
 # Sales Architecture (Phase 12)
 
+Current-state note as of Friday, August 14, 2026: this document preserves
+the original Phase 12 boundary language. Later implemented phases already
+supersede statements here that treat Inventory, Payment, Accounting,
+Outbox/Kafka, Redis/BullMQ, Notifications, or Reports as future work.
+
 This document describes the Phase 12 — Sales module: `Sale` (header) and
 `SaleItem` (line), the concurrency-safe sale-numbering mechanism, the
 pricing/customer snapshot principles, SalesAccount attribution, DataScope
