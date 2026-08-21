@@ -110,6 +110,166 @@ const PERMISSION_CATALOG: Array<{
   { resource: 'employees', action: 'update', description: 'Update employees' },
   { resource: 'employees', action: 'delete', description: 'Delete employees' },
   {
+    resource: 'departments',
+    action: 'read',
+    description: 'View departments',
+  },
+  {
+    resource: 'departments',
+    action: 'create',
+    description: 'Create departments',
+  },
+  {
+    resource: 'departments',
+    action: 'update',
+    description: 'Update departments',
+  },
+  {
+    resource: 'departments',
+    action: 'delete',
+    description: 'Delete departments',
+  },
+  {
+    resource: 'designations',
+    action: 'read',
+    description: 'View designations',
+  },
+  {
+    resource: 'designations',
+    action: 'create',
+    description: 'Create designations',
+  },
+  {
+    resource: 'designations',
+    action: 'update',
+    description: 'Update designations',
+  },
+  {
+    resource: 'designations',
+    action: 'delete',
+    description: 'Delete designations',
+  },
+  {
+    resource: 'employee_assignments',
+    action: 'read',
+    description: 'View employee assignments',
+  },
+  {
+    resource: 'employee_assignments',
+    action: 'create',
+    description: 'Create employee assignments',
+  },
+  {
+    resource: 'employee_assignments',
+    action: 'update',
+    description: 'Update employee assignments',
+  },
+  {
+    resource: 'leave_types',
+    action: 'read',
+    description: 'View leave types',
+  },
+  {
+    resource: 'leave_types',
+    action: 'create',
+    description: 'Create leave types',
+  },
+  {
+    resource: 'leave_types',
+    action: 'update',
+    description: 'Update leave types',
+  },
+  {
+    resource: 'leave_types',
+    action: 'delete',
+    description: 'Delete leave types',
+  },
+  {
+    resource: 'leave_requests',
+    action: 'read',
+    description: 'View leave requests',
+  },
+  {
+    resource: 'leave_requests',
+    action: 'create',
+    description: 'Create leave requests',
+  },
+  {
+    resource: 'leave_requests',
+    action: 'update',
+    description: 'Update leave requests',
+  },
+  {
+    resource: 'leave_requests',
+    action: 'approve',
+    description: 'Approve leave requests',
+  },
+  {
+    resource: 'leave_requests',
+    action: 'reject',
+    description: 'Reject leave requests',
+  },
+  {
+    resource: 'leave_requests',
+    action: 'cancel',
+    description: 'Cancel leave requests',
+  },
+  {
+    resource: 'attendance',
+    action: 'read',
+    description: 'View attendance records',
+  },
+  {
+    resource: 'attendance',
+    action: 'create',
+    description: 'Create attendance records',
+  },
+  {
+    resource: 'attendance',
+    action: 'update',
+    description: 'Update attendance records',
+  },
+  {
+    resource: 'settings',
+    action: 'system.read',
+    description: 'View system settings',
+  },
+  {
+    resource: 'settings',
+    action: 'system.update',
+    description: 'Update system settings',
+  },
+  {
+    resource: 'settings',
+    action: 'company.read',
+    description: 'View company settings',
+  },
+  {
+    resource: 'settings',
+    action: 'company.update',
+    description: 'Update company settings',
+  },
+  {
+    resource: 'settings',
+    action: 'branch.read',
+    description: 'View branch settings',
+  },
+  {
+    resource: 'settings',
+    action: 'branch.update',
+    description: 'Update branch settings',
+  },
+  {
+    resource: 'settings',
+    action: 'user.read',
+    description: 'View own user settings',
+  },
+  {
+    resource: 'settings',
+    action: 'user.update',
+    description: 'Update own user settings',
+  },
+  {
     resource: 'user_organizations',
     action: 'read',
     description: "View a user's organization membership",
@@ -646,8 +806,229 @@ const PERMISSION_CATALOG: Array<{
   },
   {
     resource: 'reports',
+    action: 'accounting_audit.read',
+    description:
+      'View the accounting audit log (journal entry/payment/sale/purchase order activity)',
+  },
+  {
+    resource: 'reports',
     action: 'ar_ap.read',
     description: 'View the AR/AP aging report',
+  },
+  // Payroll / HR Advanced
+  { resource: 'shifts', action: 'read', description: 'View shifts' },
+  { resource: 'shifts', action: 'create', description: 'Create shifts' },
+  {
+    resource: 'shifts',
+    action: 'update',
+    description: 'Update shifts and manage employee shift assignments',
+  },
+  { resource: 'shifts', action: 'delete', description: 'Delete shifts' },
+  {
+    resource: 'employee_compensations',
+    action: 'read',
+    description: 'View employee compensation history',
+  },
+  {
+    resource: 'employee_compensations',
+    action: 'create',
+    description: 'Create employee compensation records',
+  },
+  {
+    resource: 'payroll_components',
+    action: 'read',
+    description: 'View payroll components',
+  },
+  {
+    resource: 'payroll_components',
+    action: 'create',
+    description: 'Create payroll components',
+  },
+  {
+    resource: 'payroll_components',
+    action: 'update',
+    description: 'Update payroll components',
+  },
+  {
+    resource: 'payroll_components',
+    action: 'delete',
+    description: 'Delete payroll components',
+  },
+  {
+    resource: 'employee_payroll_components',
+    action: 'read',
+    description: 'View employee payroll component assignments',
+  },
+  {
+    resource: 'employee_payroll_components',
+    action: 'create',
+    description: 'Assign payroll components to employees',
+  },
+  {
+    resource: 'payroll_configuration',
+    action: 'read',
+    description: 'View payroll configuration',
+  },
+  {
+    resource: 'payroll_configuration',
+    action: 'update',
+    description: 'Update payroll configuration',
+  },
+  {
+    resource: 'payroll_periods',
+    action: 'read',
+    description: 'View payroll periods',
+  },
+  {
+    resource: 'payroll_periods',
+    action: 'create',
+    description: 'Create payroll periods',
+  },
+  {
+    resource: 'payroll_periods',
+    action: 'cancel',
+    description: 'Cancel payroll periods',
+  },
+  {
+    resource: 'payroll_runs',
+    action: 'read',
+    description: 'View payroll runs and payslips',
+  },
+  {
+    resource: 'payroll_runs',
+    action: 'create',
+    description: 'Create payroll runs',
+  },
+  {
+    resource: 'payroll_runs',
+    action: 'calculate',
+    description: 'Calculate a payroll run',
+  },
+  {
+    resource: 'payroll_runs',
+    action: 'finalize',
+    description: 'Finalize a payroll run',
+  },
+  {
+    resource: 'payroll_runs',
+    action: 'cancel',
+    description: 'Cancel a payroll run',
+  },
+  // Returns / Discounts / Loyalty
+  {
+    resource: 'sales_returns',
+    action: 'read',
+    description: 'View sales returns',
+  },
+  {
+    resource: 'sales_returns',
+    action: 'create',
+    description: 'Create sales returns',
+  },
+  {
+    resource: 'sales_returns',
+    action: 'confirm',
+    description:
+      'Confirm a sales return (restocks inventory, reverses loyalty)',
+  },
+  {
+    resource: 'sales_returns',
+    action: 'cancel',
+    description: 'Cancel a draft sales return',
+  },
+  {
+    resource: 'sales',
+    action: 'discount.apply',
+    description: 'Apply a manual discount or promotion code to a sale',
+  },
+  {
+    resource: 'promotions',
+    action: 'read',
+    description: 'View promotions',
+  },
+  {
+    resource: 'promotions',
+    action: 'create',
+    description: 'Create promotions',
+  },
+  {
+    resource: 'promotions',
+    action: 'update',
+    description: 'Update promotions',
+  },
+  {
+    resource: 'loyalty',
+    action: 'read',
+    description:
+      'View loyalty program configuration, balances, and transaction history',
+  },
+  {
+    resource: 'loyalty',
+    action: 'manage',
+    description: 'Configure the loyalty program',
+  },
+  {
+    resource: 'loyalty',
+    action: 'redeem',
+    description: "Redeem a customer's loyalty points",
+  },
+  // Integrations / Webhooks
+  {
+    resource: 'webhooks',
+    action: 'read',
+    description: 'View webhook subscriptions and delivery history',
+  },
+  {
+    resource: 'webhooks',
+    action: 'create',
+    description: 'Create webhook subscriptions',
+  },
+  {
+    resource: 'webhooks',
+    action: 'update',
+    description:
+      'Update, activate/deactivate, or test-deliver webhook subscriptions',
+  },
+  {
+    resource: 'webhooks',
+    action: 'delete',
+    description: 'Delete webhook subscriptions',
+  },
+  // AI Assistant / RAG
+  {
+    resource: 'ai_assistant',
+    action: 'chat',
+    description: 'Use the AI assistant chat',
+  },
+  {
+    resource: 'ai_assistant',
+    action: 'conversations.read',
+    description: "View the user's own AI conversation history",
+  },
+  {
+    resource: 'ai_assistant',
+    action: 'conversations.delete',
+    description: "Delete the user's own AI conversations",
+  },
+  {
+    resource: 'ai_knowledge',
+    action: 'read',
+    description: 'View AI knowledge-base documents',
+  },
+  {
+    resource: 'ai_knowledge',
+    action: 'create',
+    description: 'Create AI knowledge-base documents',
+  },
+  {
+    resource: 'ai_knowledge',
+    action: 'delete',
+    description: 'Delete AI knowledge-base documents',
+  },
+  {
+    resource: 'ai_knowledge',
+    action: 'ingest',
+    description: 'Trigger re-ingestion of an AI knowledge-base document',
   },
 ];
 
@@ -659,6 +1040,10 @@ const PERMISSION_CATALOG: Array<{
  * missing entirely; no other role receives one from this seed.
  */
 const SUPER_ADMIN_ALL_SCOPE_RESOURCES: readonly string[] = [
+  // Phase 07 — Organization
+  'companies',
+  'branches',
+  'warehouses',
   'categories',
   'brands',
   'collections',
@@ -703,6 +1088,33 @@ const SUPER_ADMIN_ALL_SCOPE_RESOURCES: readonly string[] = [
   'notifications',
   // Phase 22 — Reports/Dashboard
   'reports',
+  'employees',
+  'departments',
+  'designations',
+  'employee_assignments',
+  'leave_types',
+  'leave_requests',
+  'attendance',
+  'settings_system',
+  'settings_company',
+  'settings_branch',
+  'settings_user',
+  // Payroll / HR Advanced
+  'shifts',
+  'employee_compensations',
+  'payroll_components',
+  'employee_payroll_components',
+  'payroll_configuration',
+  'payroll_periods',
+  'payroll_runs',
+  // Returns / Discounts / Loyalty
+  'sales_returns',
+  'promotions',
+  'loyalty',
+  'webhooks',
+  // AI Assistant / RAG
+  'ai_assistant',
+  'ai_knowledge',
 ];
 
 async function seed(): Promise<void> {
