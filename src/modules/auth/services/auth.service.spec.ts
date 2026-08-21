@@ -7,6 +7,7 @@ import { TransactionService } from '../../../core/transaction/transaction.servic
 import { User } from '../../users/entities/user.entity';
 import { UserStatus } from '../../users/entities/user-status.enum';
 import { PasswordResetToken } from '../../users/entities/password-reset-token.entity';
+import { RefreshSession } from '../entities/refresh-session.entity';
 import { AppException } from '../../../core/errors/app.exception';
 import { AuthConfig } from '../../../config/auth.config';
 
@@ -16,10 +17,18 @@ describe('AuthService', () => {
   let resetTokenRepository: jest.Mocked<
     Pick<Repository<PasswordResetToken>, 'findOne' | 'save' | 'create'>
   >;
+  let refreshSessionRepository: jest.Mocked<
+    Pick<Repository<RefreshSession>, 'findOne' | 'save' | 'create' | 'update'>
+  >;
   let passwordService: jest.Mocked<
     Pick<PasswordService, 'verify' | 'hash' | 'validatePolicy'>
   >;
-  let tokenService: jest.Mocked<Pick<TokenService, 'signAccessToken'>>;
+  let tokenService: jest.Mocked<
+    Pick<
+      TokenService,
+      'signAccessToken' | 'generateRefreshToken' | 'hashRefreshToken'
+    >
+  >;
   let transactionService: TransactionService;
 
   const authConfig: AuthConfig = {
@@ -33,6 +42,11 @@ describe('AuthService', () => {
     cookieDomain: undefined,
     cookiePath: '/',
     passwordResetTokenExpiresInMinutes: 30,
+    authRateLimitMaxAttempts: 10,
+    authRateLimitWindowSeconds: 60,
+    refreshCookieName: 'fashion_erp_refresh_token',
+    refreshCookiePath: '/',
+    refreshTokenExpiresInDays: 30,
   };
 
   const configService = {
@@ -67,12 +81,26 @@ describe('AuthService', () => {
           (value: Partial<PasswordResetToken>) => value as PasswordResetToken,
         ),
     };
+    refreshSessionRepository = {
+      findOne: jest.fn(),
+      save: jest.fn().mockImplementation((v) => Promise.resolve(v)),
+      create: jest
+        .fn()
+        .mockImplementation(
+          (value: Partial<RefreshSession>) => value as RefreshSession,
+        ),
+      update: jest.fn(),
+    };
     passwordService = {
       verify: jest.fn(),
       hash: jest.fn(),
       validatePolicy: jest.fn(),
     };
-    tokenService = { signAccessToken: jest.fn().mockReturnValue('signed-jwt') };
+    tokenService = {
+      signAccessToken: jest.fn().mockReturnValue('signed-jwt'),
+      generateRefreshToken: jest.fn().mockReturnValue('raw-refresh-token'),
+      hashRefreshToken: jest.fn().mockReturnValue('hashed-refresh-token'),
+    };
     transactionService = new TransactionService(
       undefined as unknown as import('typeorm').DataSource,
     );
@@ -80,6 +108,7 @@ describe('AuthService', () => {
     service = new AuthService(
       userRepository as unknown as Repository<User>,
       resetTokenRepository as unknown as Repository<PasswordResetToken>,
+      refreshSessionRepository as unknown as Repository<RefreshSession>,
       passwordService,
       tokenService as unknown as TokenService,
       transactionService,
@@ -229,6 +258,149 @@ describe('AuthService', () => {
       await service.forgotPassword('user@example.com');
 
       expect(resetTokenRepository.save).toHaveBeenCalled();
+    });
+  });
+
+  describe('refresh', () => {
+    const buildSession = (
+      overrides: Partial<RefreshSession> = {},
+    ): RefreshSession =>
+      ({
+        id: 'session-1',
+        userId: 'user-123',
+        tokenHash: 'hashed-refresh-token',
+        expiresAt: new Date(Date.now() + 60_000),
+        revokedAt: null,
+        replacedById: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        deletedAt: null,
+        ...overrides,
+      }) as RefreshSession;
+
+    /** Stubs transactionService.run to hand the test a fake EntityManager backed by the mocked repository. */
+    function stubTransaction(manager: {
+      findOne: jest.Mock;
+      save: jest.Mock;
+      update: jest.Mock;
+      create: jest.Mock;
+    }) {
+      jest
+        .spyOn(transactionService, 'run')
+        .mockImplementation(async (work) => work(manager as never));
+    }
+
+    it('rejects a refresh token that does not exist', async () => {
+      refreshSessionRepository.findOne.mockResolvedValue(null);
+
+      await expect(service.refresh('unknown-token')).rejects.toMatchObject({
+        message: 'Invalid or expired session',
+      });
+    });
+
+    it('rejects an expired refresh token', async () => {
+      refreshSessionRepository.findOne.mockResolvedValue(
+        buildSession({ expiresAt: new Date(Date.now() - 1000) }),
+      );
+      const manager = {
+        findOne: jest
+          .fn()
+          .mockResolvedValue(
+            buildSession({ expiresAt: new Date(Date.now() - 1000) }),
+          ),
+        save: jest.fn(),
+        update: jest.fn(),
+        create: jest.fn(),
+      };
+      stubTransaction(manager);
+
+      await expect(service.refresh('expired-token')).rejects.toMatchObject({
+        message: 'Invalid or expired session',
+      });
+    });
+
+    it('rejects an already-revoked refresh token without minting a new access token', async () => {
+      refreshSessionRepository.findOne.mockResolvedValue(
+        buildSession({ revokedAt: new Date() }),
+      );
+
+      await expect(service.refresh('revoked-token')).rejects.toMatchObject({
+        message: 'Invalid or expired session',
+      });
+      expect(tokenService.signAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('revokes the rotated-into session when a rotated-out token is reused, even though the refresh itself fails', async () => {
+      refreshSessionRepository.findOne.mockResolvedValue(
+        buildSession({ revokedAt: new Date(), replacedById: 'session-2' }),
+      );
+
+      await expect(service.refresh('reused-token')).rejects.toThrow(
+        AppException,
+      );
+      // Must be revoked via the plain repository, NOT inside transactionService.run —
+      // a rollback from the throw below would otherwise silently undo it.
+      expect(refreshSessionRepository.update).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'session-2' }),
+        expect.objectContaining({ revokedAt: expect.any(Date) as Date }),
+      );
+    });
+
+    it('issues a new access token and rotates the refresh token on success', async () => {
+      const session = buildSession();
+      refreshSessionRepository.findOne.mockResolvedValue(session);
+      const manager = {
+        findOne: jest
+          .fn()
+          .mockResolvedValueOnce(session) // RefreshSession lookup
+          .mockResolvedValueOnce(buildUser()), // User lookup
+        save: jest.fn().mockImplementation((v) => Promise.resolve(v)),
+        update: jest.fn(),
+        create: jest
+          .fn()
+          .mockImplementation((_entity, value: Partial<RefreshSession>) => ({
+            id: 'session-2',
+            ...value,
+          })),
+      };
+      stubTransaction(manager);
+
+      const result = await service.refresh('valid-raw-token');
+
+      expect(result.accessToken).toBe('signed-jwt');
+      expect(result.refreshToken).toBe('raw-refresh-token');
+      expect(session.revokedAt).not.toBeNull();
+      expect(session.replacedById).toBe('session-2');
+    });
+
+    it('rejects refresh for a user who is no longer active', async () => {
+      const session = buildSession();
+      refreshSessionRepository.findOne.mockResolvedValue(session);
+      const manager = {
+        findOne: jest
+          .fn()
+          .mockResolvedValueOnce(session)
+          .mockResolvedValueOnce(buildUser({ status: UserStatus.Suspended })),
+        save: jest.fn(),
+        update: jest.fn(),
+        create: jest.fn(),
+      };
+      stubTransaction(manager);
+
+      await expect(service.refresh('valid-raw-token')).rejects.toMatchObject({
+        message: 'Invalid or expired session',
+      });
+    });
+  });
+
+  describe('revokeRefreshSession', () => {
+    it('revokes only the matching, not-already-revoked session', async () => {
+      await service.revokeRefreshSession('raw-token');
+
+      expect(refreshSessionRepository.update).toHaveBeenCalledWith(
+        expect.objectContaining({ tokenHash: 'hashed-refresh-token' }),
+        expect.objectContaining({ revokedAt: expect.any(Date) as Date }),
+      );
     });
   });
 

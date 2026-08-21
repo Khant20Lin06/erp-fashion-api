@@ -18,6 +18,11 @@ describe('TokenService', () => {
     cookieDomain: undefined,
     cookiePath: '/',
     passwordResetTokenExpiresInMinutes: 30,
+    authRateLimitMaxAttempts: 10,
+    authRateLimitWindowSeconds: 60,
+    refreshCookieName: 'fashion_erp_refresh_token',
+    refreshCookiePath: '/',
+    refreshTokenExpiresInDays: 30,
   };
 
   const configService = {
@@ -44,6 +49,14 @@ describe('TokenService', () => {
     const payloadB = tokenService.verifyAccessToken(tokenB);
 
     expect(payloadA.jti).not.toBe(payloadB.jti);
+  });
+
+  it('includes a millisecond issuance timestamp for precise revocation checks', () => {
+    const token = tokenService.signAccessToken('user-123');
+    const payload = tokenService.verifyAccessToken(token);
+
+    expect(typeof payload.iatMs).toBe('number');
+    expect(payload.iatMs).toBeGreaterThan(0);
   });
 
   it('does not include any permission or role claims', () => {
@@ -99,5 +112,46 @@ describe('TokenService', () => {
     );
 
     expect(() => tokenService.verifyAccessToken(wrongAudienceToken)).toThrow();
+  });
+
+  describe('refresh tokens', () => {
+    it('generates a high-entropy opaque token, not a JWT', () => {
+      const token = tokenService.generateRefreshToken();
+
+      expect(token).toMatch(/^[0-9a-f]{64}$/);
+      expect(token.split('.').length).toBe(1); // not JWT-shaped (no dots)
+    });
+
+    it('generates a different token on every call', () => {
+      const tokenA = tokenService.generateRefreshToken();
+      const tokenB = tokenService.generateRefreshToken();
+
+      expect(tokenA).not.toBe(tokenB);
+    });
+
+    it('hashes deterministically so a stored hash can be matched on lookup', () => {
+      const token = tokenService.generateRefreshToken();
+
+      expect(tokenService.hashRefreshToken(token)).toBe(
+        tokenService.hashRefreshToken(token),
+      );
+    });
+
+    it('produces different hashes for different tokens', () => {
+      const tokenA = tokenService.generateRefreshToken();
+      const tokenB = tokenService.generateRefreshToken();
+
+      expect(tokenService.hashRefreshToken(tokenA)).not.toBe(
+        tokenService.hashRefreshToken(tokenB),
+      );
+    });
+
+    it('never returns the raw token from the hash', () => {
+      const token = tokenService.generateRefreshToken();
+      const hash = tokenService.hashRefreshToken(token);
+
+      expect(hash).not.toBe(token);
+      expect(hash).not.toContain(token);
+    });
   });
 });

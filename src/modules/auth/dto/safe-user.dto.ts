@@ -1,12 +1,24 @@
+import { ApiProperty } from '@nestjs/swagger';
 import { User } from '../../users/entities/user.entity';
 
-export interface SafeUserDto {
-  id: string;
-  email: string;
-  firstName: string;
-  lastName: string;
-  displayName: string;
-  status: string;
+export class SafeUserDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ example: 'admin@example.com' })
+  email!: string;
+
+  @ApiProperty({ example: 'Ada' })
+  firstName!: string;
+
+  @ApiProperty({ example: 'Lovelace' })
+  lastName!: string;
+
+  @ApiProperty({ example: 'Ada Lovelace' })
+  displayName!: string;
+
+  @ApiProperty({ example: 'ACTIVE' })
+  status!: string;
 }
 
 export function toSafeUserDto(user: User): SafeUserDto {
