@@ -12,21 +12,14 @@ import { BranchStatus } from '../entities/branch-status.enum';
 import { ErrorCode } from '../../../core/errors/error-codes';
 
 type MockedRepo<T extends object> = jest.Mocked<
-  Pick<
-    Repository<T>,
-    'findOne' | 'findAndCount' | 'create' | 'save' | 'softRemove'
-  >
+  Pick<Repository<T>, 'findOne' | 'findAndCount' | 'create' | 'save' | 'softRemove'>
 >;
 
 describe('WarehousesService', () => {
   let service: WarehousesService;
   let warehouseRepository: MockedRepo<Warehouse>;
-  let companiesService: jest.Mocked<
-    Pick<CompaniesService, 'findActiveByIdOrNull'>
-  >;
-  let branchesService: jest.Mocked<
-    Pick<BranchesService, 'findActiveByIdOrNull'>
-  >;
+  let companiesService: jest.Mocked<Pick<CompaniesService, 'findActiveByIdOrNull'>>;
+  let branchesService: jest.Mocked<Pick<BranchesService, 'findActiveByIdOrNull'>>;
 
   const buildCompany = (overrides: Partial<Company> = {}): Company =>
     ({
@@ -74,7 +67,7 @@ describe('WarehousesService', () => {
     );
   });
 
-  describe('create — happy path', () => {
+  describe('create', () => {
     it('creates a warehouse when company and branch are active and consistent', async () => {
       companiesService.findActiveByIdOrNull.mockResolvedValue(buildCompany());
       branchesService.findActiveByIdOrNull.mockResolvedValue(buildBranch());
@@ -83,7 +76,7 @@ describe('WarehousesService', () => {
       warehouseRepository.create.mockReturnValue(created);
       warehouseRepository.save.mockResolvedValue(created);
 
-      const result = await service.create({
+      const result = await service.create('company-a', {
         companyId: 'company-a',
         branchId: 'branch-a1',
         code: 'MAIN',
@@ -92,14 +85,12 @@ describe('WarehousesService', () => {
 
       expect(result).toBe(created);
     });
-  });
 
-  describe('create — critical integrity rule (§12)', () => {
     it('rejects when companyId does not reference an active company', async () => {
       companiesService.findActiveByIdOrNull.mockResolvedValue(null);
 
       await expect(
-        service.create({
+        service.create('missing', {
           companyId: 'missing',
           branchId: 'branch-a1',
           code: 'MAIN',
@@ -114,7 +105,7 @@ describe('WarehousesService', () => {
       branchesService.findActiveByIdOrNull.mockResolvedValue(null);
 
       await expect(
-        service.create({
+        service.create('company-a', {
           companyId: 'company-a',
           branchId: 'missing',
           code: 'MAIN',
@@ -123,16 +114,14 @@ describe('WarehousesService', () => {
       ).rejects.toMatchObject({ errorCode: ErrorCode.ValidationError });
     });
 
-    it('rejects Company A + Branch belonging to Company B — the exact scenario in spec §16/§26', async () => {
-      companiesService.findActiveByIdOrNull.mockResolvedValue(
-        buildCompany({ id: 'company-a' }),
-      );
+    it('rejects cross-company branch assignment', async () => {
+      companiesService.findActiveByIdOrNull.mockResolvedValue(buildCompany({ id: 'company-a' }));
       branchesService.findActiveByIdOrNull.mockResolvedValue(
         buildBranch({ id: 'branch-b1', companyId: 'company-b' }),
       );
 
       await expect(
-        service.create({
+        service.create('company-a', {
           companyId: 'company-a',
           branchId: 'branch-b1',
           code: 'MAIN',
@@ -148,7 +137,7 @@ describe('WarehousesService', () => {
       warehouseRepository.findOne.mockResolvedValue(buildWarehouse());
 
       await expect(
-        service.create({
+        service.create('company-a', {
           companyId: 'company-a',
           branchId: 'branch-a1',
           code: 'MAIN',
@@ -161,14 +150,10 @@ describe('WarehousesService', () => {
       companiesService.findActiveByIdOrNull.mockResolvedValue(buildCompany());
       branchesService.findActiveByIdOrNull.mockResolvedValue(buildBranch());
       warehouseRepository.findOne.mockResolvedValue(null);
-      warehouseRepository.create.mockImplementation(
-        (input) => input as Warehouse,
-      );
-      warehouseRepository.save.mockImplementation((input) =>
-        Promise.resolve(input as Warehouse),
-      );
+      warehouseRepository.create.mockImplementation((input) => input as Warehouse);
+      warehouseRepository.save.mockImplementation((input) => Promise.resolve(input as Warehouse));
 
-      const result = await service.create({
+      const result = await service.create('company-a', {
         companyId: 'company-a',
         branchId: 'branch-a1',
         code: 'DIST-1',
@@ -180,10 +165,18 @@ describe('WarehousesService', () => {
   });
 
   describe('update', () => {
-    it('never accepts companyId/branchId reassignment (immutability, §64)', () => {
+    it('never accepts companyId/branchId reassignment', () => {
       const dto = { name: 'Renamed' };
       expect((dto as Record<string, unknown>).companyId).toBeUndefined();
       expect((dto as Record<string, unknown>).branchId).toBeUndefined();
+    });
+
+    it('treats a warehouse in another company as not found', async () => {
+      warehouseRepository.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.update('warehouse-1', 'company-b', { name: 'Renamed' }),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.NotFound });
     });
   });
 
@@ -191,11 +184,9 @@ describe('WarehousesService', () => {
     it('deactivate sets status to INACTIVE', async () => {
       const warehouse = buildWarehouse({ status: WarehouseStatus.Active });
       warehouseRepository.findOne.mockResolvedValue(warehouse);
-      warehouseRepository.save.mockImplementation((input) =>
-        Promise.resolve(input as Warehouse),
-      );
+      warehouseRepository.save.mockImplementation((input) => Promise.resolve(input as Warehouse));
 
-      const result = await service.deactivate('warehouse-1');
+      const result = await service.deactivate('warehouse-1', 'company-a');
 
       expect(result.status).toBe(WarehouseStatus.Inactive);
     });

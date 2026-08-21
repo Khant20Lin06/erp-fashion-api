@@ -4,6 +4,8 @@ import { Category } from './entities/category.entity';
 import { Brand } from './entities/brand.entity';
 import { Collection } from './entities/collection.entity';
 import { AttributeOption } from './entities/attribute-option.entity';
+import { Product } from '../products/entities/product.entity';
+import { ProductVariantAttribute } from '../products/entities/product-variant-attribute.entity';
 import { CategoriesService } from './services/categories.service';
 import { BrandsService } from './services/brands.service';
 import { CollectionsService } from './services/collections.service';
@@ -18,7 +20,14 @@ import { OrganizationModule } from '../organization/organization.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Category, Brand, Collection, AttributeOption]),
+    TypeOrmModule.forFeature([
+      Category,
+      Brand,
+      Collection,
+      AttributeOption,
+      Product,
+      ProductVariantAttribute,
+    ]),
     AuthModule,
     RbacModule,
     OrganizationModule,

@@ -38,6 +38,8 @@ import { PriceListItemStatus } from '../../products/entities/price-list-item-sta
 import { SalesAccount } from '../../sales-accounts/entities/sales-account.entity';
 import { SalesAccountStatus } from '../../sales-accounts/entities/sales-account-status.enum';
 import { SalesAccountAccessService } from '../../sales-accounts/services/sales-account-access.service';
+import { LoyaltyService } from '../../loyalty/services/loyalty.service';
+import { PromotionsService } from '../../promotions/services/promotions.service';
 import { AppException } from '../../../core/errors/app.exception';
 import { ErrorCode } from '../../../core/errors/error-codes';
 import {
@@ -96,6 +98,8 @@ export class SalesService {
     private readonly customersService: CustomersService,
     private readonly productVariantsService: ProductVariantsService,
     private readonly salesAccountAccessService: SalesAccountAccessService,
+    private readonly loyaltyService: LoyaltyService,
+    private readonly promotionsService: PromotionsService,
   ) {}
 
   async findAll(
@@ -557,6 +561,27 @@ export class SalesService {
         });
       }
 
+      // Order-level Promotion (Returns/Discounts/Loyalty phase, additive):
+      // resolved and locked inside this same transaction, backend-computed
+      // discount amount only — never a client-supplied total. Applied on
+      // top of the sum of per-item discounts already computed above.
+      let promotionId: string | null = null;
+      if (dto.promotionCode) {
+        const promotion = await this.promotionsService.resolveAndLockForUse(
+          manager,
+          companyId,
+          dto.promotionCode,
+          subtotal,
+          transactionDate,
+        );
+        const promotionDiscount = this.promotionsService.computeDiscountAmount(
+          promotion,
+          subtotal - discountTotal,
+        );
+        discountTotal += promotionDiscount;
+        promotionId = promotion.id;
+      }
+
       const grandTotal = subtotal - discountTotal + taxTotal;
 
       const sale = manager.create(Sale, {
@@ -581,6 +606,10 @@ export class SalesService {
         updatedBy: userId,
       });
       const savedSale = await manager.save(Sale, sale);
+
+      if (promotionId) {
+        await this.promotionsService.incrementUsage(manager, promotionId);
+      }
 
       for (const row of itemRows) {
         const saleItem = manager.create(SaleItem, {
@@ -710,7 +739,27 @@ export class SalesService {
 
       sale.status = SaleStatus.Confirmed;
       sale.updatedBy = userId;
-      return manager.save(Sale, sale);
+      const confirmedSale = await manager.save(Sale, sale);
+
+      // Loyalty earning (Returns/Discounts/Loyalty phase, additive):
+      // idempotent via LoyaltyPointTransaction's own
+      // UNIQUE(company_id, source_type, source_id) — a retried/replayed
+      // confirm() call (this method itself is only reachable once per
+      // Sale, since a second call fails assertTransitionAllowed() before
+      // reaching here, but a future caller reusing earnForSale() directly
+      // is still protected). No-ops (returns null, no row written) if no
+      // active LoyaltyProgram is configured for the company — loyalty is
+      // opt-in configuration, never assumed.
+      await this.loyaltyService.earnForSale(
+        manager,
+        confirmedSale.companyId,
+        confirmedSale.customerId,
+        confirmedSale.id,
+        confirmedSale.grandTotal,
+        userId,
+      );
+
+      return confirmedSale;
     });
   }
 

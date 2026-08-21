@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -28,6 +29,9 @@ import {
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../rbac/guards/permission.guard';
 import { RequirePermission } from '../../rbac/decorators/require-permission.decorator';
+import { AuthorizationService } from '../../rbac/services/authorization.service';
+import { CurrentUser } from '../../../shared/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../../auth/types/authenticated-user';
 
 @ApiTags('Organization - User Membership')
 @Controller('users/:userId')
@@ -35,13 +39,15 @@ import { RequirePermission } from '../../rbac/decorators/require-permission.deco
 export class UserOrganizationController {
   constructor(
     private readonly userOrganizationService: UserOrganizationService,
+    private readonly authorizationService: AuthorizationService,
   ) {}
 
   @Get('companies')
-  @RequirePermission('user_organizations.read')
   async listCompanies(
     @Param('userId', ParseUUIDPipe) userId: string,
+    @CurrentUser() currentUser: AuthenticatedUser,
   ): Promise<CompanyMembershipResponseDto[]> {
+    await this.assertCanReadMemberships(currentUser.id, userId);
     const memberships =
       await this.userOrganizationService.listCompanyMemberships(userId);
     return memberships.map(toCompanyMembershipResponseDto);
@@ -74,10 +80,11 @@ export class UserOrganizationController {
   }
 
   @Get('branches')
-  @RequirePermission('user_organizations.read')
   async listBranches(
     @Param('userId', ParseUUIDPipe) userId: string,
+    @CurrentUser() currentUser: AuthenticatedUser,
   ): Promise<BranchMembershipResponseDto[]> {
+    await this.assertCanReadMemberships(currentUser.id, userId);
     const memberships =
       await this.userOrganizationService.listBranchMemberships(userId);
     return memberships.map(toBranchMembershipResponseDto);
@@ -107,10 +114,11 @@ export class UserOrganizationController {
   }
 
   @Get('warehouses')
-  @RequirePermission('user_organizations.read')
   async listWarehouses(
     @Param('userId', ParseUUIDPipe) userId: string,
+    @CurrentUser() currentUser: AuthenticatedUser,
   ): Promise<WarehouseMembershipResponseDto[]> {
+    await this.assertCanReadMemberships(currentUser.id, userId);
     const memberships =
       await this.userOrganizationService.listWarehouseMemberships(userId);
     return memberships.map(toWarehouseMembershipResponseDto);
@@ -140,5 +148,23 @@ export class UserOrganizationController {
       userId,
       warehouseId,
     );
+  }
+
+  private async assertCanReadMemberships(
+    actorUserId: string,
+    targetUserId: string,
+  ): Promise<void> {
+    if (actorUserId === targetUserId) {
+      return;
+    }
+
+    const canReadMemberships = await this.authorizationService.can(
+      actorUserId,
+      'user_organizations.read',
+    );
+
+    if (!canReadMemberships) {
+      throw new ForbiddenException('Insufficient permission');
+    }
   }
 }

@@ -6,6 +6,7 @@ import { CompaniesService } from '../../organization/services/companies.service'
 import { Company } from '../../organization/entities/company.entity';
 import { CompanyStatus } from '../../organization/entities/company-status.enum';
 import { ErrorCode } from '../../../core/errors/error-codes';
+import { Product } from '../../products/entities/product.entity';
 
 describe('BrandsService', () => {
   let service: BrandsService;
@@ -15,6 +16,7 @@ describe('BrandsService', () => {
       'findOne' | 'create' | 'save' | 'softRemove' | 'createQueryBuilder'
     >
   >;
+  let productRepository: jest.Mocked<Pick<Repository<Product>, 'count'>>;
   let companiesService: jest.Mocked<
     Pick<CompaniesService, 'findActiveByIdOrNull'>
   >;
@@ -60,10 +62,14 @@ describe('BrandsService', () => {
       softRemove: jest.fn(),
       createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
     };
+    productRepository = {
+      count: jest.fn(),
+    };
     companiesService = { findActiveByIdOrNull: jest.fn() };
 
     service = new BrandsService(
       brandRepository as unknown as Repository<Brand>,
+      productRepository as unknown as Repository<Product>,
       companiesService as unknown as CompaniesService,
     );
   });
@@ -82,6 +88,41 @@ describe('BrandsService', () => {
       });
 
       expect(result).toBe(created);
+    });
+
+    it('auto-generates a brand code when none is provided', async () => {
+      companiesService.findActiveByIdOrNull.mockResolvedValue(buildCompany());
+      brandRepository.findOne.mockResolvedValue(null);
+      const created = buildBrand({ code: 'BR-NIKE' });
+      brandRepository.create.mockReturnValue(created);
+      brandRepository.save.mockResolvedValue(created);
+
+      const result = await service.create('company-a', {
+        name: 'Nike',
+      });
+
+      expect(result).toBe(created);
+      expect(brandRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'BR-NIKE' }),
+      );
+    });
+
+    it('auto-generates a unique suffixed brand code when the base code already exists', async () => {
+      companiesService.findActiveByIdOrNull.mockResolvedValue(buildCompany());
+      brandRepository.findOne
+        .mockResolvedValueOnce(buildBrand({ code: 'BR-NIKE' }))
+        .mockResolvedValueOnce(null);
+      const created = buildBrand({ code: 'BR-NIKE-2' });
+      brandRepository.create.mockReturnValue(created);
+      brandRepository.save.mockResolvedValue(created);
+
+      await service.create('company-a', {
+        name: 'Nike',
+      });
+
+      expect(brandRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'BR-NIKE-2' }),
+      );
     });
 
     it('rejects when companyId does not reference an active company', async () => {
@@ -143,9 +184,25 @@ describe('BrandsService', () => {
   });
 
   describe('remove', () => {
-    it('soft-deletes the brand', async () => {
+    it('rejects deletion when products are assigned to the brand', async () => {
       const brand = buildBrand();
       brandRepository.findOne.mockResolvedValue(brand);
+      productRepository.count.mockResolvedValue(2);
+
+      await expect(
+        service.remove('brand-1', 'company-a'),
+      ).rejects.toMatchObject({
+        errorCode: ErrorCode.Conflict,
+        message:
+          'This brand cannot be deleted because 2 products are assigned to it. Move or delete those products first.',
+      });
+      expect(brandRepository.softRemove).not.toHaveBeenCalled();
+    });
+
+    it('soft-deletes the brand when no products are assigned', async () => {
+      const brand = buildBrand();
+      brandRepository.findOne.mockResolvedValue(brand);
+      productRepository.count.mockResolvedValue(0);
 
       await service.remove('brand-1', 'company-a');
 

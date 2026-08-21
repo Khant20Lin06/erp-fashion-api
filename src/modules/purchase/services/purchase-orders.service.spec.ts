@@ -46,7 +46,15 @@ describe('PurchaseOrdersService', () => {
   let queryBuilder: jest.Mocked<
     Pick<
       SelectQueryBuilder<PurchaseOrder>,
-      'where' | 'andWhere' | 'orderBy' | 'skip' | 'take' | 'getManyAndCount'
+      | 'where'
+      | 'andWhere'
+      | 'leftJoinAndSelect'
+      | 'loadRelationCountAndMap'
+      | 'distinct'
+      | 'orderBy'
+      | 'skip'
+      | 'take'
+      | 'getManyAndCount'
     >
   >;
   interface MockManager {
@@ -105,6 +113,9 @@ describe('PurchaseOrdersService', () => {
     queryBuilder = {
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      loadRelationCountAndMap: jest.fn().mockReturnThis(),
+      distinct: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
       skip: jest.fn().mockReturnThis(),
       take: jest.fn().mockReturnThis(),

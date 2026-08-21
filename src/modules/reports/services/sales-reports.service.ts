@@ -34,6 +34,12 @@ export interface SalesByBranchRow {
   grandTotal: string;
 }
 
+export interface SalesByProductRow {
+  productName: string;
+  unitsSold: number;
+  revenue: string;
+}
+
 /**
  * New Phase 22 report — Sales (summary/by-date/by-customer/by-branch), from
  * real Sale data. Every query filters to CONFIRMED sales only (DRAFT/
@@ -109,12 +115,25 @@ export class SalesReportsService {
     companyId: string,
     query: SalesReportQueryDto & { allowedBranchIds?: string[] | null },
   ): Promise<SalesByDateRow[]> {
-    const rows = await this.baseQuery(companyId, query)
-      .select('DATE(sale.transactionDate)', 'date')
+    const qb = this.baseQuery(companyId, query);
+
+    let periodExpression = 'DATE(sale.transactionDate)';
+
+    if (query.granularity === 'monthly') {
+      periodExpression = "DATE_FORMAT(sale.transactionDate, '%Y-%m-01')";
+    } else if (query.granularity === 'weekly') {
+      periodExpression =
+        'DATE_SUB(DATE(sale.transactionDate), INTERVAL WEEKDAY(sale.transactionDate) DAY)';
+    } else if (query.granularity === 'yearly') {
+      periodExpression = "DATE_FORMAT(sale.transactionDate, '%Y-01-01')";
+    }
+
+    const rows = await qb
+      .select(periodExpression, 'date')
       .addSelect('COUNT(sale.id)', 'saleCount')
       .addSelect('COALESCE(SUM(sale.grandTotal), 0)', 'grandTotal')
-      .groupBy('DATE(sale.transactionDate)')
-      .orderBy('DATE(sale.transactionDate)', 'ASC')
+      .groupBy(periodExpression)
+      .orderBy(periodExpression, 'ASC')
       .getRawMany<{ date: string; saleCount: string; grandTotal: string }>();
 
     return rows.map((row) => ({
@@ -181,6 +200,52 @@ export class SalesReportsService {
       branchName: row.branchName,
       saleCount: Number(row.saleCount),
       grandTotal: Number(row.grandTotal).toFixed(2),
+    }));
+  }
+
+  async byProduct(
+    companyId: string,
+    query: SalesReportQueryDto & { allowedBranchIds?: string[] | null },
+  ): Promise<SalesByProductRow[]> {
+    const qb = this.saleRepository
+      .createQueryBuilder('sale')
+      .innerJoin('sale.items', 'item')
+      .where('sale.companyId = :companyId', { companyId })
+      .andWhere('sale.status = :status', { status: SaleStatus.Confirmed });
+
+    if (query.branchId) {
+      qb.andWhere('sale.branchId = :branchId', { branchId: query.branchId });
+    } else if (query.allowedBranchIds?.length) {
+      qb.andWhere('sale.branchId IN (:...allowedBranchIds)', {
+        allowedBranchIds: query.allowedBranchIds,
+      });
+    }
+    if (query.fromDate) {
+      qb.andWhere('sale.transactionDate >= :fromDate', {
+        fromDate: query.fromDate,
+      });
+    }
+    if (query.toDate) {
+      qb.andWhere('sale.transactionDate <= :toDate', { toDate: query.toDate });
+    }
+
+    const rows = await qb
+      .select('item.productNameSnapshot', 'productName')
+      .addSelect('SUM(item.quantity)', 'unitsSold')
+      .addSelect('COALESCE(SUM(item.lineTotal), 0)', 'revenue')
+      .groupBy('item.productNameSnapshot')
+      .orderBy('revenue', 'DESC')
+      .limit(5)
+      .getRawMany<{
+        productName: string;
+        unitsSold: string;
+        revenue: string;
+      }>();
+
+    return rows.map((row) => ({
+      productName: row.productName,
+      unitsSold: Number(row.unitsSold),
+      revenue: Number(row.revenue).toFixed(2),
     }));
   }
 }

@@ -19,6 +19,7 @@ describe('SalesReportsService', () => {
       groupBy: jest.fn().mockReturnThis(),
       addGroupBy: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
       getRawOne: jest.fn().mockResolvedValue(undefined),
       getRawMany: jest.fn().mockResolvedValue([]),
     };
@@ -117,9 +118,53 @@ describe('SalesReportsService', () => {
     expect(queryBuilder.groupBy).toHaveBeenCalledWith(
       'DATE(sale.transactionDate)',
     );
+    expect(queryBuilder.orderBy).toHaveBeenCalledWith(
+      'DATE(sale.transactionDate)',
+      'ASC',
+    );
     expect(result).toEqual([
       { date: '2026-08-01', saleCount: 2, grandTotal: '100.00' },
     ]);
+  });
+
+  it('byDate uses a strict-mode-safe weekly bucket expression', async () => {
+    await service.byDate('company-a', { granularity: 'weekly' });
+
+    expect(queryBuilder.select).toHaveBeenCalledWith(
+      'DATE_SUB(DATE(sale.transactionDate), INTERVAL WEEKDAY(sale.transactionDate) DAY)',
+      'date',
+    );
+    expect(queryBuilder.groupBy).toHaveBeenCalledWith(
+      'DATE_SUB(DATE(sale.transactionDate), INTERVAL WEEKDAY(sale.transactionDate) DAY)',
+    );
+    expect(queryBuilder.orderBy).toHaveBeenCalledWith(
+      'DATE_SUB(DATE(sale.transactionDate), INTERVAL WEEKDAY(sale.transactionDate) DAY)',
+      'ASC',
+    );
+  });
+
+  it('byDate uses matching monthly select/group expressions', async () => {
+    await service.byDate('company-a', { granularity: 'monthly' });
+
+    expect(queryBuilder.select).toHaveBeenCalledWith(
+      "DATE_FORMAT(sale.transactionDate, '%Y-%m-01')",
+      'date',
+    );
+    expect(queryBuilder.groupBy).toHaveBeenCalledWith(
+      "DATE_FORMAT(sale.transactionDate, '%Y-%m-01')",
+    );
+  });
+
+  it('byDate uses matching yearly select/group expressions', async () => {
+    await service.byDate('company-a', { granularity: 'yearly' });
+
+    expect(queryBuilder.select).toHaveBeenCalledWith(
+      "DATE_FORMAT(sale.transactionDate, '%Y-01-01')",
+      'date',
+    );
+    expect(queryBuilder.groupBy).toHaveBeenCalledWith(
+      "DATE_FORMAT(sale.transactionDate, '%Y-01-01')",
+    );
   });
 
   it('byCustomer joins customer and groups by customer identity', async () => {
@@ -149,5 +194,18 @@ describe('SalesReportsService', () => {
     await service.byBranch('company-a', {});
 
     expect(queryBuilder.leftJoin).toHaveBeenCalledWith('sale.branch', 'branch');
+  });
+
+  it('byProduct returns only real, query-derived fields — no fabricated profitMargin', async () => {
+    queryBuilder.getRawMany.mockResolvedValue([
+      { productName: 'Denim Jacket', unitsSold: '10', revenue: '500.00' },
+    ]);
+
+    const result = await service.byProduct('company-a', {});
+
+    expect(result).toEqual([
+      { productName: 'Denim Jacket', unitsSold: 10, revenue: '500.00' },
+    ]);
+    expect(result[0]).not.toHaveProperty('profitMargin');
   });
 });

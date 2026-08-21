@@ -4,6 +4,7 @@ import Redis from 'ioredis';
 import { Inject } from '@nestjs/common';
 import { REDIS_CLIENT, createRedisClient } from './redis-client.provider';
 import { CacheService } from './cache.service';
+import { isOpenApiGenerationMode } from '../../shared/utils/runtime-flags';
 
 /**
  * Owns the shared ioredis client and the CacheService abstraction over it
@@ -37,6 +38,10 @@ export class RedisModule implements OnModuleDestroy {
   constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis) {}
 
   async onModuleDestroy(): Promise<void> {
+    if (isOpenApiGenerationMode()) {
+      return;
+    }
+
     await this.redis.quit().catch(() => undefined);
   }
 }

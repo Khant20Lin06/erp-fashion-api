@@ -21,15 +21,28 @@ import { QueueService } from './queue.service';
  * point the same direction — @nestjs/bullmq's decorator-based
  * @Processor()/@Worker() abstraction would be a second, competing DI
  * paradigm for background work alongside the existing thin-wrapper
- * pattern, and nothing in this codebase's docker-compose or deployment
- * setup (single `api` service, no worker/queue-consumer service anywhere)
- * suggests a separate worker process was ever provisioned for. Workers
- * therefore run in-process, as plain injectable classes extending
+ * pattern. Workers run in-process, as plain injectable classes extending
  * BaseQueueWorker, registered as providers in their OWN domain module
  * (e.g. NotificationWorker lives in the notifications module, not here) —
  * QueueModule only owns the shared connection/producer, exactly like
  * KafkaModule only owns the shared client/producer/consumer-registrar
  * while PaymentEventConsumer itself lives in the payments module.
+ *
+ * Process topology (Phase 20 — Production Infrastructure): every
+ * BaseQueueWorker/Kafka consumer's onModuleInit() is gated by
+ * isWorkerRuntimeRole() (see shared/utils/runtime-flags.ts), so whether a
+ * worker actually starts depends on APP_ROLE at the process level, not on
+ * this module. docker-compose.prod.yml runs two containers from the same
+ * image: `api` (APP_ROLE=api — HTTP only, no BullMQ/Kafka consumers ever
+ * start) and `worker` (APP_ROLE=worker — runs all consumers/workers, no
+ * public HTTP surface). This means exactly one process consumes each
+ * queue/topic in the documented production topology — not two competing
+ * always-on consumers. Kafka group IDs are fixed/shared (not
+ * per-process-random) specifically so that if the `worker` service is ever
+ * scaled to multiple replicas, Kafka's own consumer-group protocol
+ * load-balances partitions across them correctly, and BullMQ's own
+ * per-queue concurrency setting governs in-process parallelism — neither
+ * is accidental duplicate processing.
  *
  * @Global so any module can inject QueueService without every intermediate
  * module re-importing QueueModule explicitly.

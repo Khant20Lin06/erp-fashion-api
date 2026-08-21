@@ -101,8 +101,15 @@ export class ProductVariantsService {
   ): Promise<VariantAttributeResponseDto[]> {
     const rows = await this.variantAttributeRepository.find({
       where: { variantId },
+      relations: { option: true },
     });
-    return rows.map((row) => ({ kind: row.kind, optionId: row.optionId }));
+    return rows.map((row) => ({
+      kind: row.kind,
+      optionId: row.optionId,
+      optionCode: row.option?.code,
+      optionValue: row.option?.value,
+      swatch: row.option?.swatch ?? null,
+    }));
   }
 
   private async resolveAttributes(

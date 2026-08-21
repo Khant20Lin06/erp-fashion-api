@@ -32,6 +32,7 @@ export interface PurchaseOrderResponseDto {
   updatedBy: string | null;
   createdAt: Date;
   updatedAt: Date;
+  itemCount: number;
   items?: PurchaseOrderItemResponseDto[];
 }
 
@@ -62,6 +63,7 @@ export function toPurchaseOrderResponseDto(
     updatedBy: entity.updatedBy,
     createdAt: entity.createdAt,
     updatedAt: entity.updatedAt,
+    itemCount: entity.itemCount ?? entity.items?.length ?? 0,
     items: entity.items
       ? entity.items.map(toPurchaseOrderItemResponseDto)
       : undefined,

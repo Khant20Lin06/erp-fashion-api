@@ -1,4 +1,4 @@
-import { forwardRef, Module } from '@nestjs/common';
+import { forwardRef, Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from './entities/user.entity';
 import { PasswordResetToken } from './entities/password-reset-token.entity';
@@ -7,11 +7,12 @@ import { UsersController } from './controllers/users.controller';
 import { AuthModule } from '../auth/auth.module';
 import { RbacModule } from '../rbac/rbac.module';
 
+@Global()
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, PasswordResetToken]),
     forwardRef(() => AuthModule),
-    RbacModule,
+    forwardRef(() => RbacModule),
   ],
   controllers: [UsersController],
   providers: [UsersService],

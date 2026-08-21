@@ -12,10 +12,7 @@ import { ApiTags } from '@nestjs/swagger';
 import { StockAdjustmentsService } from '../services/stock-adjustments.service';
 import { CreateStockAdjustmentDto } from '../dto/create-stock-adjustment.dto';
 import { ListStockAdjustmentsDto } from '../dto/list-stock-adjustments.dto';
-import {
-  StockAdjustmentResponseDto,
-  toStockAdjustmentResponseDto,
-} from '../dto/stock-adjustment-response.dto';
+import { StockAdjustmentResponseDto } from '../dto/stock-adjustment-response.dto';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../rbac/guards/permission.guard';
 import { RequirePermission } from '../../rbac/decorators/require-permission.decorator';
@@ -52,11 +49,7 @@ export class StockAdjustmentsController {
       RESOURCE,
       query.companyId,
     );
-    const result = await this.stockAdjustmentsService.findAll(companyId, query);
-    return {
-      data: result.data.map(toStockAdjustmentResponseDto),
-      meta: result.meta,
-    };
+    return this.stockAdjustmentsService.findAllView(companyId, query);
   }
 
   @Get(':id')
@@ -72,11 +65,10 @@ export class StockAdjustmentsController {
       RESOURCE,
       companyIdQuery,
     );
-    const entity = await this.stockAdjustmentsService.findByIdInCompany(
+    return this.stockAdjustmentsService.findViewByIdInCompany(
       id,
       companyId,
     );
-    return toStockAdjustmentResponseDto(entity);
   }
 
   @Post()
@@ -91,11 +83,10 @@ export class StockAdjustmentsController {
       RESOURCE,
       dto.companyId,
     );
-    const entity = await this.stockAdjustmentsService.create(
+    return this.stockAdjustmentsService.createView(
       companyId,
       user.id,
       dto,
     );
-    return toStockAdjustmentResponseDto(entity);
   }
 }

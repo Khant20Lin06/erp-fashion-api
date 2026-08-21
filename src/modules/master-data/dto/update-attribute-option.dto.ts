@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import {
   IsInt,
   IsOptional,
@@ -17,6 +18,11 @@ export class UpdateAttributeOptionDto {
   value?: string;
 
   @IsOptional()
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value !== 'string') return value;
+    const normalized = value.trim().toUpperCase();
+    return normalized === '' ? undefined : normalized;
+  })
   @IsString()
   @Matches(/^#[0-9A-Fa-f]{6}$/, {
     message: 'swatch must be a 6-digit hex color (e.g. #1A2B3C)',

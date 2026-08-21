@@ -1,8 +1,16 @@
-import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  Optional,
+} from '@nestjs/common';
 import { Queue, JobsOptions } from 'bullmq';
 import Redis from 'ioredis';
 import { BULLMQ_CONNECTION } from './bullmq-connection.provider';
 import { QueueName, QueueNames } from './queue-names';
+import { isOpenApiGenerationMode } from '../../shared/utils/runtime-flags';
+import { MetricsRegistryService } from '../../observability/metrics/metrics-registry.service';
 
 /**
  * Default job options applied to every enqueue (Phase 20, locked scope):
@@ -38,7 +46,14 @@ export class QueueService implements OnModuleDestroy {
   private readonly logger = new Logger(QueueService.name);
   private readonly queues = new Map<QueueName, Queue>();
 
-  constructor(@Inject(BULLMQ_CONNECTION) private readonly connection: Redis) {
+  constructor(
+    @Inject(BULLMQ_CONNECTION) private readonly connection: Redis,
+    @Optional() private readonly metrics?: MetricsRegistryService,
+  ) {
+    if (isOpenApiGenerationMode()) {
+      return;
+    }
+
     for (const name of Object.values(QueueNames)) {
       this.queues.set(name, new Queue(name, { connection: this.connection }));
     }
@@ -76,10 +91,12 @@ export class QueueService implements OnModuleDestroy {
         ...DEFAULT_JOB_OPTIONS,
         jobId: options?.jobId,
       });
+      this.metrics?.recordBullMqEnqueue(queueName, 'success');
     } catch (error) {
       this.logger.error(
         `Failed to enqueue job "${jobName}" on queue "${queueName}": ${(error as Error).message}`,
       );
+      this.metrics?.recordBullMqEnqueue(queueName, 'error');
       throw error;
     }
   }
@@ -94,7 +111,28 @@ export class QueueService implements OnModuleDestroy {
     }
   }
 
+  async getQueueCounts(): Promise<Record<string, Record<string, number>>> {
+    const entries = await Promise.all(
+      Array.from(this.queues.entries()).map(async ([name, queue]) => {
+        const counts = await queue.getJobCounts(
+          'waiting',
+          'active',
+          'completed',
+          'failed',
+          'delayed',
+        );
+        return [name, counts] as const;
+      }),
+    );
+
+    return Object.fromEntries(entries);
+  }
+
   async onModuleDestroy(): Promise<void> {
+    if (isOpenApiGenerationMode()) {
+      return;
+    }
+
     await Promise.all(
       Array.from(this.queues.values()).map((queue) =>
         queue.close().catch(() => undefined),

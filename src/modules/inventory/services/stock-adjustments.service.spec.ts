@@ -9,12 +9,26 @@ import { WarehouseStatus } from '../../organization/entities/warehouse-status.en
 import { ProductVariantsService } from '../../products/services/product-variants.service';
 import { ProductVariantStatus } from '../../products/entities/product-variant-status.enum';
 import { ErrorCode } from '../../../core/errors/error-codes';
+import { Warehouse } from '../../organization/entities/warehouse.entity';
+import { ProductVariant } from '../../products/entities/product-variant.entity';
+import { ProductVariantAttribute } from '../../products/entities/product-variant-attribute.entity';
+import { User } from '../../users/entities/user.entity';
+import { StockMovement } from '../entities/stock-movement.entity';
 
 describe('StockAdjustmentsService', () => {
   let service: StockAdjustmentsService;
   let stockAdjustmentRepository: jest.Mocked<
     Pick<Repository<StockAdjustment>, 'findOne' | 'createQueryBuilder'>
   >;
+  let warehouseRepository: jest.Mocked<Pick<Repository<Warehouse>, 'find'>>;
+  let productVariantRepository: jest.Mocked<
+    Pick<Repository<ProductVariant>, 'find'>
+  >;
+  let productVariantAttributeRepository: jest.Mocked<
+    Pick<Repository<ProductVariantAttribute>, 'find'>
+  >;
+  let userRepository: jest.Mocked<Pick<Repository<User>, 'find'>>;
+  let stockMovementRepository: jest.Mocked<Pick<Repository<StockMovement>, 'find'>>;
   let transactionService: jest.Mocked<Pick<TransactionService, 'run'>>;
   let warehousesService: jest.Mocked<Pick<WarehousesService, 'findById'>>;
   let productVariantsService: jest.Mocked<
@@ -74,6 +88,21 @@ describe('StockAdjustmentsService', () => {
       findOne: jest.fn(),
       createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
     };
+    warehouseRepository = {
+      find: jest.fn().mockResolvedValue([]),
+    };
+    productVariantRepository = {
+      find: jest.fn().mockResolvedValue([]),
+    };
+    productVariantAttributeRepository = {
+      find: jest.fn().mockResolvedValue([]),
+    };
+    userRepository = {
+      find: jest.fn().mockResolvedValue([]),
+    };
+    stockMovementRepository = {
+      find: jest.fn().mockResolvedValue([]),
+    };
 
     stockRow = { onHandQuantity: 10 };
     stockQueryBuilder = {
@@ -119,6 +148,11 @@ describe('StockAdjustmentsService', () => {
 
     service = new StockAdjustmentsService(
       stockAdjustmentRepository as unknown as Repository<StockAdjustment>,
+      warehouseRepository as unknown as Repository<Warehouse>,
+      productVariantRepository as unknown as Repository<ProductVariant>,
+      productVariantAttributeRepository as unknown as Repository<ProductVariantAttribute>,
+      userRepository as unknown as Repository<User>,
+      stockMovementRepository as unknown as Repository<StockMovement>,
       transactionService as unknown as TransactionService,
       warehousesService as unknown as WarehousesService,
       productVariantsService as unknown as ProductVariantsService,

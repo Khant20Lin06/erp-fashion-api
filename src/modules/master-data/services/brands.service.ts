@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, Repository } from 'typeorm';
 import { Brand } from '../entities/brand.entity';
 import { BrandStatus } from '../entities/brand-status.enum';
+import { Product } from '../../products/entities/product.entity';
 import { CreateBrandDto } from '../dto/create-brand.dto';
 import { UpdateBrandDto } from '../dto/update-brand.dto';
 import { ListBrandsDto } from '../dto/list-brands.dto';
@@ -15,8 +16,10 @@ import {
 } from '../../../shared/dto/pagination.dto';
 import { resolveSortField } from '../../../shared/dto/resolve-sort-field';
 
+export type BrandListItem = Brand & { productCount: number };
+
 export interface PaginatedBrands {
-  data: Brand[];
+  data: BrandListItem[];
   meta: { page: number; limit: number; total: number };
 }
 
@@ -27,6 +30,8 @@ export class BrandsService {
   constructor(
     @InjectRepository(Brand)
     private readonly brandRepository: Repository<Brand>,
+    @InjectRepository(Product)
+    private readonly productRepository: Repository<Product>,
     private readonly companiesService: CompaniesService,
   ) {}
 
@@ -67,7 +72,17 @@ export class BrandsService {
 
     const [data, total] = await qb.getManyAndCount();
 
-    return { data, meta: { page, limit, total } };
+    const brandsWithCounts = await Promise.all(
+      data.map(async (brand) =>
+        Object.assign(brand, {
+          productCount: await this.productRepository.count({
+            where: { companyId, brandId: brand.id },
+          }),
+        }),
+      ),
+    );
+
+    return { data: brandsWithCounts, meta: { page, limit, total } };
   }
 
   async findByIdInCompany(id: string, companyId: string): Promise<Brand> {
@@ -89,19 +104,11 @@ export class BrandsService {
       );
     }
 
-    const existing = await this.brandRepository.findOne({
-      where: { companyId, code: dto.code },
-    });
-    if (existing) {
-      throw new AppException(
-        ErrorCode.Conflict,
-        'Brand code already exists for this company',
-      );
-    }
+    const code = await this.resolveCreateCode(companyId, dto.code, dto.name);
 
     const brand = this.brandRepository.create({
       companyId,
-      code: dto.code,
+      code,
       name: dto.name,
       description: dto.description ?? null,
       country: dto.country ?? null,
@@ -137,9 +144,89 @@ export class BrandsService {
     return this.brandRepository.save(brand);
   }
 
-  /** Soft delete only (no business records exist yet in this phase to block on). */
+  /** Soft delete only, blocked while products still reference the brand. */
   async remove(id: string, companyId: string): Promise<void> {
     const brand = await this.findByIdInCompany(id, companyId);
+
+    const productCount = await this.productRepository.count({
+      where: { companyId, brandId: id },
+    });
+    if (productCount > 0) {
+      throw new AppException(
+        ErrorCode.Conflict,
+        `This brand cannot be deleted because ${productCount} product${
+          productCount === 1 ? ' is' : 's are'
+        } assigned to it. Move or delete ${
+          productCount === 1 ? 'that product' : 'those products'
+        } first.`,
+      );
+    }
+
     await this.brandRepository.softRemove(brand);
+  }
+
+  private async resolveCreateCode(
+    companyId: string,
+    requestedCode: string | undefined,
+    name: string,
+  ): Promise<string> {
+    const normalizedRequestedCode = requestedCode?.trim();
+    if (normalizedRequestedCode) {
+      const existing = await this.brandRepository.findOne({
+        where: { companyId, code: normalizedRequestedCode },
+      });
+      if (existing) {
+        throw new AppException(
+          ErrorCode.Conflict,
+          'Brand code already exists for this company',
+        );
+      }
+      return normalizedRequestedCode;
+    }
+
+    return this.generateUniqueCode(companyId, name);
+  }
+
+  private async generateUniqueCode(
+    companyId: string,
+    name: string,
+  ): Promise<string> {
+    const baseCode = this.buildBaseCode(name);
+    let candidate = baseCode;
+    let suffix = 2;
+
+    while (
+      await this.brandRepository.findOne({
+        where: { companyId, code: candidate },
+      })
+    ) {
+      candidate = this.appendNumericSuffix(baseCode, suffix);
+      suffix += 1;
+    }
+
+    return candidate;
+  }
+
+  private buildBaseCode(name: string): string {
+    const slug =
+      name
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'ITEM';
+
+    return this.truncateCode(`BR-${slug}`);
+  }
+
+  private appendNumericSuffix(baseCode: string, suffix: number): string {
+    const suffixText = `-${suffix}`;
+    const maxBaseLength = 50 - suffixText.length;
+    const truncatedBase = baseCode.slice(0, maxBaseLength).replace(/-+$/g, '');
+    return `${truncatedBase}${suffixText}`;
+  }
+
+  private truncateCode(code: string): string {
+    const truncated = code.slice(0, 50).replace(/-+$/g, '');
+    return truncated || 'BR-ITEM';
   }
 }

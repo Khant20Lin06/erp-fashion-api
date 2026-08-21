@@ -13,6 +13,10 @@ import { NotificationChannel } from '../entities/notification-channel.enum';
 import { QueueService } from '../../queue/queue.service';
 import { QueueNames } from '../../queue/queue-names';
 import { SEND_NOTIFICATION_JOB } from '../workers/notification-job.interface';
+import {
+  isOpenApiGenerationMode,
+  isWorkerRuntimeRole,
+} from '../../../shared/utils/runtime-flags';
 
 /**
  * Fixed, meaningful consumer group id (never random/per-process — same
@@ -60,6 +64,10 @@ export class NotificationEventConsumer implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    if (isOpenApiGenerationMode() || !isWorkerRuntimeRole()) {
+      return;
+    }
+
     await this.kafkaConsumerService.run(
       NOTIFICATION_CONSUMER_NAME,
       [PAYMENT_EVENTS_TOPIC],
@@ -135,7 +143,10 @@ export class NotificationEventConsumer implements OnModuleInit {
       await this.queueService.enqueue(
         QueueNames.NOTIFICATIONS,
         SEND_NOTIFICATION_JOB,
-        { notificationId: notification.id },
+        {
+          notificationId: notification.id,
+          correlationId: envelope.correlationId,
+        },
         { jobId: `notification-${notification.id}` },
       );
     } catch (error) {

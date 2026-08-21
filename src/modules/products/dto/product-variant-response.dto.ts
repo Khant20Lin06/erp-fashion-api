@@ -5,6 +5,9 @@ import { AttributeKind } from '../../master-data/entities/attribute-kind.enum';
 export interface VariantAttributeResponseDto {
   kind: AttributeKind;
   optionId: string;
+  optionCode?: string;
+  optionValue?: string;
+  swatch?: string | null;
 }
 
 export interface ProductVariantResponseDto {

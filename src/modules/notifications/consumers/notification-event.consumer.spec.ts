@@ -142,13 +142,13 @@ describe('NotificationEventConsumer', () => {
     expect(queueService.enqueue).toHaveBeenCalledWith(
       QueueNames.NOTIFICATIONS,
       expect.any(String),
-      { notificationId: 'notif-1' },
+      { notificationId: 'notif-1', correlationId: null },
       expect.any(Object),
     );
     const enqueueCall = queueService.enqueue.mock.calls[0] as [
       string,
       string,
-      { notificationId: string },
+      { notificationId: string; correlationId: string | null },
       { jobId: string },
     ];
     expect(enqueueCall[3].jobId).toContain('notif-1');

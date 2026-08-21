@@ -8,6 +8,10 @@ import { PAYMENT_EVENTS_TOPIC } from '../../outbox/outbox-topics';
 import { PAYMENT_CONFIRMED_EVENT_TYPE } from '../events/payment-confirmed.event';
 import type { EventEnvelope } from '../../outbox/interfaces/event-envelope.interface';
 import { KafkaConfig } from '../../../config/kafka.config';
+import {
+  isOpenApiGenerationMode,
+  isWorkerRuntimeRole,
+} from '../../../shared/utils/runtime-flags';
 
 /**
  * Consumer group id — fixed and meaningful (never random/per-process), so
@@ -52,6 +56,10 @@ export class PaymentEventConsumer implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    if (isOpenApiGenerationMode() || !isWorkerRuntimeRole()) {
+      return;
+    }
+
     const kafkaConfig = this.configService.get<KafkaConfig>('kafka')!;
     await this.kafkaConsumerService.run(
       kafkaConfig.groupId,

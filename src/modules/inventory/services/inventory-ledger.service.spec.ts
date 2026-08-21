@@ -53,6 +53,10 @@ describe('InventoryLedgerService', () => {
   let stockRepository: jest.Mocked<
     Pick<Repository<WarehouseStock>, 'createQueryBuilder'>
   >;
+  const listRepository = () =>
+    ({
+      find: jest.fn().mockResolvedValue([]),
+    }) as unknown as Repository<never>;
 
   beforeEach(() => {
     movementQB = makeQB<StockMovement>();
@@ -67,6 +71,15 @@ describe('InventoryLedgerService', () => {
     service = new InventoryLedgerService(
       movementRepository as unknown as Repository<StockMovement>,
       stockRepository as unknown as Repository<WarehouseStock>,
+      listRepository() as unknown as Repository<never>,
+      listRepository() as unknown as Repository<never>,
+      listRepository() as unknown as Repository<never>,
+      listRepository() as unknown as Repository<never>,
+      listRepository() as unknown as Repository<never>,
+      listRepository() as unknown as Repository<never>,
+      listRepository() as unknown as Repository<never>,
+      listRepository() as unknown as Repository<never>,
+      listRepository() as unknown as Repository<never>,
     );
   });
 

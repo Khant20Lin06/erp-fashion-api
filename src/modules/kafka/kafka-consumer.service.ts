@@ -1,7 +1,14 @@
-import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  Optional,
+} from '@nestjs/common';
 import { Consumer, Kafka } from 'kafkajs';
 import { KAFKA_CLIENT } from './kafka-client.provider';
 import { KafkaMessageHandler } from './kafka-consumer.interface';
+import { MetricsRegistryService } from '../../observability/metrics/metrics-registry.service';
 
 /**
  * Thin wrapper around kafkajs consumer-group registration (Phase 18, D3/D5).
@@ -22,7 +29,10 @@ export class KafkaConsumerService implements OnModuleDestroy {
   private readonly logger = new Logger(KafkaConsumerService.name);
   private readonly consumers: Consumer[] = [];
 
-  constructor(@Inject(KAFKA_CLIENT) private readonly kafka: Kafka) {}
+  constructor(
+    @Inject(KAFKA_CLIENT) private readonly kafka: Kafka,
+    @Optional() private readonly metrics?: MetricsRegistryService,
+  ) {}
 
   async run(
     groupId: string,
@@ -37,12 +47,34 @@ export class KafkaConsumerService implements OnModuleDestroy {
 
     await consumer.run({
       eachMessage: async ({ topic, partition, message }) => {
-        await handler({
-          topic,
-          partition,
-          key: message.key ? message.key.toString() : null,
-          value: message.value ? message.value.toString() : null,
-        });
+        const startedAt = Date.now();
+        try {
+          await handler({
+            topic,
+            partition,
+            offset: message.offset,
+            key: message.key ? message.key.toString() : null,
+            value: message.value ? message.value.toString() : null,
+            headers: Object.fromEntries(
+              Object.entries(message.headers ?? {}).map(([key, value]) => [
+                key,
+                value ? value.toString() : null,
+              ]),
+            ),
+          });
+          this.metrics?.recordKafkaConsume(
+            topic,
+            'success',
+            Date.now() - startedAt,
+          );
+        } catch (error) {
+          this.metrics?.recordKafkaConsume(
+            topic,
+            'error',
+            Date.now() - startedAt,
+          );
+          throw error;
+        }
       },
     });
 

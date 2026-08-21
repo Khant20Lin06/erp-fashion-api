@@ -7,6 +7,7 @@ import { CompaniesService } from '../../organization/services/companies.service'
 import { Company } from '../../organization/entities/company.entity';
 import { CompanyStatus } from '../../organization/entities/company-status.enum';
 import { ErrorCode } from '../../../core/errors/error-codes';
+import { ProductVariantAttribute } from '../../products/entities/product-variant-attribute.entity';
 
 describe('AttributeOptionsService', () => {
   let service: AttributeOptionsService;
@@ -15,6 +16,9 @@ describe('AttributeOptionsService', () => {
       Repository<AttributeOption>,
       'findOne' | 'create' | 'save' | 'softRemove' | 'createQueryBuilder'
     >
+  >;
+  let productVariantAttributeRepository: jest.Mocked<
+    Pick<Repository<ProductVariantAttribute>, 'count'>
   >;
   let companiesService: jest.Mocked<
     Pick<CompaniesService, 'findActiveByIdOrNull'>
@@ -64,10 +68,14 @@ describe('AttributeOptionsService', () => {
       softRemove: jest.fn(),
       createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
     };
+    productVariantAttributeRepository = {
+      count: jest.fn(),
+    };
     companiesService = { findActiveByIdOrNull: jest.fn() };
 
     service = new AttributeOptionsService(
       attributeOptionRepository as unknown as Repository<AttributeOption>,
+      productVariantAttributeRepository as unknown as Repository<ProductVariantAttribute>,
       companiesService as unknown as CompaniesService,
     );
   });
@@ -177,6 +185,32 @@ describe('AttributeOptionsService', () => {
       await expect(
         service.findByIdInCompany('option-1', 'company-b'),
       ).rejects.toMatchObject({ errorCode: ErrorCode.NotFound });
+    });
+  });
+  describe('remove', () => {
+    it('rejects deletion when product variants still use the option', async () => {
+      const option = buildOption({ kind: AttributeKind.Size, value: 'XL' });
+      attributeOptionRepository.findOne.mockResolvedValue(option);
+      productVariantAttributeRepository.count.mockResolvedValue(2);
+
+      await expect(
+        service.remove('option-1', 'company-a'),
+      ).rejects.toMatchObject({
+        errorCode: ErrorCode.Conflict,
+        message:
+          'This size option cannot be deleted because 2 product variants still use it. Remove or change those variant assignments first.',
+      });
+      expect(attributeOptionRepository.softRemove).not.toHaveBeenCalled();
+    });
+
+    it('soft-deletes the option when no product variants use it', async () => {
+      const option = buildOption({ kind: AttributeKind.Size, value: 'XL' });
+      attributeOptionRepository.findOne.mockResolvedValue(option);
+      productVariantAttributeRepository.count.mockResolvedValue(0);
+
+      await service.remove('option-1', 'company-a');
+
+      expect(attributeOptionRepository.softRemove).toHaveBeenCalledWith(option);
     });
   });
 });

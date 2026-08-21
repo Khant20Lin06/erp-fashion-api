@@ -9,11 +9,14 @@ export interface BrandResponseDto {
   description: string | null;
   country: string | null;
   status: BrandStatus;
+  productCount: number;
   createdAt: Date;
   updatedAt: Date;
 }
 
-export function toBrandResponseDto(brand: Brand): BrandResponseDto {
+export function toBrandResponseDto(
+  brand: Brand & { productCount?: number },
+): BrandResponseDto {
   return {
     id: brand.id,
     companyId: brand.companyId,
@@ -22,6 +25,7 @@ export function toBrandResponseDto(brand: Brand): BrandResponseDto {
     description: brand.description,
     country: brand.country,
     status: brand.status,
+    productCount: brand.productCount ?? 0,
     createdAt: brand.createdAt,
     updatedAt: brand.updatedAt,
   };

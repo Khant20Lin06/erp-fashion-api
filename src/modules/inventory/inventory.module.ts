@@ -24,6 +24,12 @@ import { AuthModule } from '../auth/auth.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { OrganizationModule } from '../organization/organization.module';
 import { ProductsModule } from '../products/products.module';
+import { Warehouse } from '../organization/entities/warehouse.entity';
+import { ProductVariant } from '../products/entities/product-variant.entity';
+import { ProductVariantAttribute } from '../products/entities/product-variant-attribute.entity';
+import { User } from '../users/entities/user.entity';
+import { Sale } from '../sales/entities/sale.entity';
+import { SaleReturn } from '../sales-returns/entities/sale-return.entity';
 
 /**
  * Phase 14 — Inventory. A single flat module directory
@@ -57,6 +63,12 @@ import { ProductsModule } from '../products/products.module';
       CompanyStockTransferCounter,
       StockAdjustment,
       CompanyStockAdjustmentCounter,
+      Warehouse,
+      ProductVariant,
+      ProductVariantAttribute,
+      User,
+      Sale,
+      SaleReturn,
     ]),
     AuthModule,
     RbacModule,

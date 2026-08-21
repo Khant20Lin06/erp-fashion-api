@@ -3,6 +3,7 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -27,6 +28,8 @@ interface RequestWithUser extends Request {
  */
 @Injectable()
 export class PermissionGuard implements CanActivate {
+  private readonly logger = new Logger(PermissionGuard.name);
+
   constructor(
     private readonly reflector: Reflector,
     private readonly authorizationService: AuthorizationService,
@@ -54,6 +57,9 @@ export class PermissionGuard implements CanActivate {
         : await this.authorizationService.canAll(userId, requirement.codes);
 
     if (!authorized) {
+      this.logger.warn(
+        `Forbidden request ${request.method} ${request.originalUrl ?? request.url} for user ${userId}`,
+      );
       throw new ForbiddenException('Insufficient permission');
     }
 

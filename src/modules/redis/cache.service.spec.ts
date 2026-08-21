@@ -4,7 +4,10 @@ import { CacheService } from './cache.service';
 describe('CacheService', () => {
   let service: CacheService;
   let redis: jest.Mocked<
-    Pick<Redis, 'get' | 'set' | 'del' | 'exists' | 'ttl' | 'ping'>
+    Pick<
+      Redis,
+      'get' | 'set' | 'del' | 'exists' | 'ttl' | 'ping' | 'incr' | 'expire'
+    >
   >;
 
   beforeEach(() => {
@@ -15,6 +18,8 @@ describe('CacheService', () => {
       exists: jest.fn(),
       ttl: jest.fn(),
       ping: jest.fn(),
+      incr: jest.fn(),
+      expire: jest.fn(),
     };
     service = new CacheService(redis as unknown as Redis);
   });
@@ -123,6 +128,35 @@ describe('CacheService', () => {
       redis.ping.mockRejectedValue(new Error('ECONNREFUSED'));
 
       await expect(service.isConnected()).resolves.toBe(false);
+    });
+  });
+
+  describe('increment', () => {
+    it('increments a counter and applies TTL on first use', async () => {
+      redis.incr.mockResolvedValue(1);
+      redis.expire.mockResolvedValue(1);
+
+      await expect(
+        service.increment('erp:security:rl:login', 60),
+      ).resolves.toBe(1);
+      expect(redis.expire).toHaveBeenCalledWith('erp:security:rl:login', 60);
+    });
+
+    it('does not reapply TTL when the counter already exists', async () => {
+      redis.incr.mockResolvedValue(2);
+
+      await expect(
+        service.increment('erp:security:rl:login', 60),
+      ).resolves.toBe(2);
+      expect(redis.expire).not.toHaveBeenCalled();
+    });
+
+    it('fails open when Redis increment throws', async () => {
+      redis.incr.mockRejectedValue(new Error('ECONNREFUSED'));
+
+      await expect(
+        service.increment('erp:security:rl:login', 60),
+      ).resolves.toBeUndefined();
     });
   });
 });

@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, Repository } from 'typeorm';
 import { Category } from '../entities/category.entity';
 import { CategoryStatus } from '../entities/category-status.enum';
+import { Product } from '../../products/entities/product.entity';
 import { CreateCategoryDto } from '../dto/create-category.dto';
 import { UpdateCategoryDto } from '../dto/update-category.dto';
 import { ListCategoriesDto } from '../dto/list-categories.dto';
@@ -15,8 +16,10 @@ import {
 } from '../../../shared/dto/pagination.dto';
 import { resolveSortField } from '../../../shared/dto/resolve-sort-field';
 
+export type CategoryListItem = Category & { productCount: number };
+
 export interface PaginatedCategories {
-  data: Category[];
+  data: CategoryListItem[];
   meta: { page: number; limit: number; total: number };
 }
 
@@ -38,6 +41,8 @@ export class CategoriesService {
   constructor(
     @InjectRepository(Category)
     private readonly categoryRepository: Repository<Category>,
+    @InjectRepository(Product)
+    private readonly productRepository: Repository<Product>,
     private readonly companiesService: CompaniesService,
   ) {}
 
@@ -85,7 +90,17 @@ export class CategoriesService {
 
     const [data, total] = await qb.getManyAndCount();
 
-    return { data, meta: { page, limit, total } };
+    const categoriesWithCounts = await Promise.all(
+      data.map(async (category) =>
+        Object.assign(category, {
+          productCount: await this.productRepository.count({
+            where: { companyId, categoryId: category.id },
+          }),
+        }),
+      ),
+    );
+
+    return { data: categoriesWithCounts, meta: { page, limit, total } };
   }
 
   /**
@@ -115,19 +130,11 @@ export class CategoriesService {
       await this.assertValidParent(dto.parentId, companyId);
     }
 
-    const existing = await this.categoryRepository.findOne({
-      where: { companyId, code: dto.code },
-    });
-    if (existing) {
-      throw new AppException(
-        ErrorCode.Conflict,
-        'Category code already exists for this company',
-      );
-    }
+    const code = await this.resolveCreateCode(companyId, dto.code, dto.name);
 
     const category = this.categoryRepository.create({
       companyId,
-      code: dto.code,
+      code,
       name: dto.name,
       description: dto.description ?? null,
       parentId: dto.parentId ?? null,
@@ -196,7 +203,86 @@ export class CategoriesService {
       );
     }
 
+    const productCount = await this.productRepository.count({
+      where: { companyId, categoryId: id },
+    });
+    if (productCount > 0) {
+      throw new AppException(
+        ErrorCode.Conflict,
+        `This category cannot be deleted because ${productCount} product${
+          productCount === 1 ? ' is' : 's are'
+        } assigned to it. Move or delete ${
+          productCount === 1 ? 'that product' : 'those products'
+        } first.`,
+      );
+    }
+
     await this.categoryRepository.softRemove(category);
+  }
+
+  private async resolveCreateCode(
+    companyId: string,
+    requestedCode: string | undefined,
+    name: string,
+  ): Promise<string> {
+    const normalizedRequestedCode = requestedCode?.trim();
+    if (normalizedRequestedCode) {
+      const existing = await this.categoryRepository.findOne({
+        where: { companyId, code: normalizedRequestedCode },
+      });
+      if (existing) {
+        throw new AppException(
+          ErrorCode.Conflict,
+          'Category code already exists for this company',
+        );
+      }
+      return normalizedRequestedCode;
+    }
+
+    return this.generateUniqueCode(companyId, name);
+  }
+
+  private async generateUniqueCode(
+    companyId: string,
+    name: string,
+  ): Promise<string> {
+    const baseCode = this.buildBaseCode(name);
+    let candidate = baseCode;
+    let suffix = 2;
+
+    while (
+      await this.categoryRepository.findOne({
+        where: { companyId, code: candidate },
+      })
+    ) {
+      candidate = this.appendNumericSuffix(baseCode, suffix);
+      suffix += 1;
+    }
+
+    return candidate;
+  }
+
+  private buildBaseCode(name: string): string {
+    const slug =
+      name
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'ITEM';
+
+    return this.truncateCode(`CAT-${slug}`);
+  }
+
+  private appendNumericSuffix(baseCode: string, suffix: number): string {
+    const suffixText = `-${suffix}`;
+    const maxBaseLength = 50 - suffixText.length;
+    const truncatedBase = baseCode.slice(0, maxBaseLength).replace(/-+$/g, '');
+    return `${truncatedBase}${suffixText}`;
+  }
+
+  private truncateCode(code: string): string {
+    const truncated = code.slice(0, 50).replace(/-+$/g, '');
+    return truncated || 'CAT-ITEM';
   }
 
   /**

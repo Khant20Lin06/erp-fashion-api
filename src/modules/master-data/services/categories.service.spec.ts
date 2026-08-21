@@ -6,6 +6,7 @@ import { CompaniesService } from '../../organization/services/companies.service'
 import { Company } from '../../organization/entities/company.entity';
 import { CompanyStatus } from '../../organization/entities/company-status.enum';
 import { ErrorCode } from '../../../core/errors/error-codes';
+import { Product } from '../../products/entities/product.entity';
 
 describe('CategoriesService', () => {
   let service: CategoriesService;
@@ -20,6 +21,7 @@ describe('CategoriesService', () => {
       | 'createQueryBuilder'
     >
   >;
+  let productRepository: jest.Mocked<Pick<Repository<Product>, 'count'>>;
   let companiesService: jest.Mocked<
     Pick<CompaniesService, 'findActiveByIdOrNull'>
   >;
@@ -67,10 +69,14 @@ describe('CategoriesService', () => {
       count: jest.fn(),
       createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
     };
+    productRepository = {
+      count: jest.fn(),
+    };
     companiesService = { findActiveByIdOrNull: jest.fn() };
 
     service = new CategoriesService(
       categoryRepository as unknown as Repository<Category>,
+      productRepository as unknown as Repository<Product>,
       companiesService as unknown as CompaniesService,
     );
   });
@@ -89,6 +95,41 @@ describe('CategoriesService', () => {
       });
 
       expect(result).toBe(created);
+    });
+
+    it('auto-generates a category code when none is provided', async () => {
+      companiesService.findActiveByIdOrNull.mockResolvedValue(buildCompany());
+      categoryRepository.findOne.mockResolvedValue(null);
+      const created = buildCategory({ code: 'CAT-SHIRTS' });
+      categoryRepository.create.mockReturnValue(created);
+      categoryRepository.save.mockResolvedValue(created);
+
+      const result = await service.create('company-a', {
+        name: 'Shirts',
+      });
+
+      expect(result).toBe(created);
+      expect(categoryRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'CAT-SHIRTS' }),
+      );
+    });
+
+    it('auto-generates a unique suffixed category code when the base code already exists', async () => {
+      companiesService.findActiveByIdOrNull.mockResolvedValue(buildCompany());
+      categoryRepository.findOne
+        .mockResolvedValueOnce(buildCategory({ code: 'CAT-SHIRTS' }))
+        .mockResolvedValueOnce(null);
+      const created = buildCategory({ code: 'CAT-SHIRTS-2' });
+      categoryRepository.create.mockReturnValue(created);
+      categoryRepository.save.mockResolvedValue(created);
+
+      await service.create('company-a', {
+        name: 'Shirts',
+      });
+
+      expect(categoryRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'CAT-SHIRTS-2' }),
+      );
     });
 
     it('creates a subcategory when parentId references a valid active parent in the same company', async () => {
@@ -219,12 +260,29 @@ describe('CategoriesService', () => {
         errorCode: ErrorCode.Conflict,
       });
       expect(categoryRepository.softRemove).not.toHaveBeenCalled();
+      expect(productRepository.count).not.toHaveBeenCalled();
     });
 
-    it('soft-deletes a category with no children', async () => {
+    it('rejects deletion when products are assigned to the category', async () => {
+      categoryRepository.findOne.mockResolvedValue(buildCategory());
+      categoryRepository.count.mockResolvedValue(0);
+      productRepository.count.mockResolvedValue(2);
+
+      await expect(
+        service.remove('category-1', 'company-a'),
+      ).rejects.toMatchObject({
+        errorCode: ErrorCode.Conflict,
+        message:
+          'This category cannot be deleted because 2 products are assigned to it. Move or delete those products first.',
+      });
+      expect(categoryRepository.softRemove).not.toHaveBeenCalled();
+    });
+
+    it('soft-deletes a category with no children and no assigned products', async () => {
       const category = buildCategory();
       categoryRepository.findOne.mockResolvedValue(category);
       categoryRepository.count.mockResolvedValue(0);
+      productRepository.count.mockResolvedValue(0);
 
       await service.remove('category-1', 'company-a');
 

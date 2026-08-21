@@ -8,6 +8,7 @@ import { REQUEST_ID_HEADER } from '../middleware/request-id.middleware';
 
 interface RequestWithId extends IncomingMessage {
   id: ReqId;
+  user?: { id?: string };
 }
 
 const SENSITIVE_PATHS = [
@@ -36,7 +37,12 @@ export function createLoggerOptions(configService: ConfigService): Params {
       },
       genReqId: (req: IncomingMessage) =>
         req.headers[REQUEST_ID_HEADER] as string,
-      customProps: () => ({ environment: appConfig.nodeEnv }),
+      customProps: (req: RequestWithId) => ({
+        service: appConfig.appName,
+        environment: appConfig.nodeEnv,
+        role: appConfig.appRole,
+        userId: req.user?.id,
+      }),
       transport: isProduction
         ? undefined
         : {

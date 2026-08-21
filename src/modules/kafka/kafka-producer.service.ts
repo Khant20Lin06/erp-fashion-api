@@ -3,15 +3,22 @@ import {
   Injectable,
   Logger,
   OnModuleDestroy,
+  Optional,
   OnModuleInit,
 } from '@nestjs/common';
 import { Kafka, Producer } from 'kafkajs';
 import { KAFKA_CLIENT } from './kafka-client.provider';
+import {
+  isOpenApiGenerationMode,
+  isWorkerRuntimeRole,
+} from '../../shared/utils/runtime-flags';
+import { MetricsRegistryService } from '../../observability/metrics/metrics-registry.service';
 
 export interface KafkaPublishRequest {
   topic: string;
   key: string;
   value: string;
+  headers?: Record<string, string>;
 }
 
 /**
@@ -35,11 +42,18 @@ export class KafkaProducerService implements OnModuleInit, OnModuleDestroy {
   private readonly producer: Producer;
   private connected = false;
 
-  constructor(@Inject(KAFKA_CLIENT) private readonly kafka: Kafka) {
+  constructor(
+    @Inject(KAFKA_CLIENT) private readonly kafka: Kafka,
+    @Optional() private readonly metrics?: MetricsRegistryService,
+  ) {
     this.producer = this.kafka.producer({ allowAutoTopicCreation: true });
   }
 
   async onModuleInit(): Promise<void> {
+    if (isOpenApiGenerationMode() || !isWorkerRuntimeRole()) {
+      return;
+    }
+
     try {
       await this.producer.connect();
       this.connected = true;
@@ -76,11 +90,32 @@ export class KafkaProducerService implements OnModuleInit, OnModuleDestroy {
    * service silently swallowing errors.
    */
   async publish(request: KafkaPublishRequest): Promise<void> {
+    const startedAt = Date.now();
     await this.ensureConnected();
-    await this.producer.send({
-      topic: request.topic,
-      messages: [{ key: request.key, value: request.value }],
-    });
+    try {
+      await this.producer.send({
+        topic: request.topic,
+        messages: [
+          {
+            key: request.key,
+            value: request.value,
+            headers: request.headers,
+          },
+        ],
+      });
+      this.metrics?.recordKafkaPublish(
+        request.topic,
+        'success',
+        Date.now() - startedAt,
+      );
+    } catch (error) {
+      this.metrics?.recordKafkaPublish(
+        request.topic,
+        'error',
+        Date.now() - startedAt,
+      );
+      throw error;
+    }
   }
 
   /** Used by the Kafka health check — a real (cheap) connectivity probe, never assumed. */

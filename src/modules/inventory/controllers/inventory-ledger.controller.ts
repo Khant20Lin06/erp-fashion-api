@@ -13,7 +13,6 @@ import { StockCardQueryDto } from '../dto/stock-card-query.dto';
 import { ReconciliationQueryDto } from '../dto/reconciliation-query.dto';
 import {
   InventoryLedgerResponseDto,
-  toInventoryLedgerResponseDto,
 } from '../dto/inventory-ledger-response.dto';
 import {
   StockCardEntryResponseDto,
@@ -65,11 +64,7 @@ export class InventoryLedgerController {
       RESOURCE,
       query.companyId,
     );
-    const result = await this.inventoryLedgerService.findAll(companyId, query);
-    return {
-      data: result.data.map(toInventoryLedgerResponseDto),
-      meta: result.meta,
-    };
+    return this.inventoryLedgerService.findAllView(companyId, query);
   }
 
   @Get('stock-card')
@@ -124,10 +119,9 @@ export class InventoryLedgerController {
       RESOURCE,
       companyIdQuery,
     );
-    const entity = await this.inventoryLedgerService.findByIdInCompany(
+    return this.inventoryLedgerService.findByIdViewInCompany(
       id,
       companyId,
     );
-    return toInventoryLedgerResponseDto(entity);
   }
 }

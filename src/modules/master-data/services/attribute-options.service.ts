@@ -4,6 +4,7 @@ import { Brackets, Repository } from 'typeorm';
 import { AttributeOption } from '../entities/attribute-option.entity';
 import { AttributeOptionStatus } from '../entities/attribute-option-status.enum';
 import { AttributeKind } from '../entities/attribute-kind.enum';
+import { ProductVariantAttribute } from '../../products/entities/product-variant-attribute.entity';
 import { CreateAttributeOptionDto } from '../dto/create-attribute-option.dto';
 import { UpdateAttributeOptionDto } from '../dto/update-attribute-option.dto';
 import { ListAttributeOptionsDto } from '../dto/list-attribute-options.dto';
@@ -41,6 +42,8 @@ export class AttributeOptionsService {
   constructor(
     @InjectRepository(AttributeOption)
     private readonly attributeOptionRepository: Repository<AttributeOption>,
+    @InjectRepository(ProductVariantAttribute)
+    private readonly productVariantAttributeRepository: Repository<ProductVariantAttribute>,
     private readonly companiesService: CompaniesService,
   ) {}
 
@@ -177,6 +180,17 @@ export class AttributeOptionsService {
 
   async remove(id: string, companyId: string): Promise<void> {
     const option = await this.findByIdInCompany(id, companyId);
+    const usageCount = await this.productVariantAttributeRepository.count({
+      where: { optionId: id },
+    });
+    if (usageCount > 0) {
+      throw new AppException(
+        ErrorCode.Conflict,
+        `This ${option.kind.toLowerCase()} option cannot be deleted because ${usageCount} product variant${
+          usageCount === 1 ? '' : 's'
+        } still use it. Remove or change those variant assignments first.`,
+      );
+    }
     await this.attributeOptionRepository.softRemove(option);
   }
 }

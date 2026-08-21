@@ -11,12 +11,23 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import {
+  ApiBadRequestResponse,
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiForbiddenResponse,
+  ApiHeader,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+  ApiUnauthorizedResponse,
+} from '@nestjs/swagger';
 import type { Response } from 'express';
 import { PaymentsService } from '../services/payments.service';
 import { CreatePaymentDto } from '../dto/create-payment.dto';
 import { ListPaymentsDto } from '../dto/list-payments.dto';
 import {
+  PaymentListResponseDto,
   PaymentResponseDto,
   toPaymentResponseDto,
 } from '../dto/payment-response.dto';
@@ -27,18 +38,15 @@ import { DataScopeService } from '../../rbac/services/data-scope.service';
 import { CurrentUser } from '../../../shared/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../auth/types/authenticated-user';
 import { resolveRequestCompanyId } from '../../master-data/utils/resolve-request-company-id';
+import { ErrorResponseDto } from '../../../common/swagger/dto/error-response.dto';
 
 const RESOURCE = 'payments';
 
 /**
  * Payment API (D14, LOCKED): GET /payments, GET /payments/:id,
  * POST /payments only. No PATCH/DELETE/refund/reverse/void/summary/
- * reconciliation/export endpoint of any kind — D4/D5/D10, LOCKED. No
- * POST /payments/:id/confirm — every Payment is created directly
- * CONFIRMED (see PaymentsService's own docblock and
- * docs/PAYMENT_ARCHITECTURE.md "Lifecycle Decision" for the full D4
- * reasoning), so there is no DRAFT state a separate confirm step would
- * transition out of.
+ * reconciliation/export endpoint of any kind. No POST /payments/:id/confirm
+ * because every Payment is created directly CONFIRMED.
  */
 @ApiTags('Payments')
 @Controller('payments')
@@ -51,6 +59,28 @@ export class PaymentsController {
 
   @Get()
   @RequirePermission('payments.read')
+  @ApiBearerAuth('bearerAuth')
+  @ApiOperation({
+    summary: 'List payments visible within the authenticated user scope',
+  })
+  @ApiOkResponse({
+    type: PaymentListResponseDto,
+    description:
+      'Paginated payment list. companyId acts only as a filter; DataScope remains authoritative.',
+  })
+  @ApiBadRequestResponse({
+    type: ErrorResponseDto,
+    description: 'Validation failed for query parameters.',
+  })
+  @ApiUnauthorizedResponse({
+    type: ErrorResponseDto,
+    description: 'Missing, invalid, expired, or revoked JWT session.',
+  })
+  @ApiForbiddenResponse({
+    type: ErrorResponseDto,
+    description:
+      'The authenticated user lacks the required permission or company scope.',
+  })
   async findAll(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: ListPaymentsDto,
@@ -70,6 +100,18 @@ export class PaymentsController {
 
   @Get(':id')
   @RequirePermission('payments.read')
+  @ApiBearerAuth('bearerAuth')
+  @ApiOperation({ summary: 'Get a single payment by id within scope' })
+  @ApiOkResponse({
+    type: PaymentResponseDto,
+    description: 'Payment detail if it is visible in the authenticated scope.',
+  })
+  @ApiBadRequestResponse({
+    type: ErrorResponseDto,
+    description: 'Validation failed for path/query parameters.',
+  })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiForbiddenResponse({ type: ErrorResponseDto })
   async findOne(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
@@ -86,12 +128,38 @@ export class PaymentsController {
   }
 
   /**
-   * D11 (LOCKED): honors an optional Idempotency-Key request header. A
-   * repeat request with the same key returns the original payment with
-   * 200 (not 201) instead of creating a duplicate.
+   * Honors an optional Idempotency-Key request header. A repeat request
+   * with the same key returns the original payment with 200 instead of
+   * creating a duplicate.
    */
   @Post()
   @RequirePermission('payments.create')
+  @ApiBearerAuth('bearerAuth')
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description:
+      'Optional idempotency key. Reusing the same key returns the existing payment instead of creating a duplicate.',
+  })
+  @ApiOperation({
+    summary:
+      'Create a confirmed payment and trigger the downstream accounting/outbox flow',
+  })
+  @ApiCreatedResponse({
+    type: PaymentResponseDto,
+    description: 'New payment created successfully.',
+  })
+  @ApiOkResponse({
+    type: PaymentResponseDto,
+    description:
+      'Existing payment returned because the supplied idempotency key was already used.',
+  })
+  @ApiBadRequestResponse({
+    type: ErrorResponseDto,
+    description: 'Validation failed for the request body.',
+  })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiForbiddenResponse({ type: ErrorResponseDto })
   async create(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreatePaymentDto,

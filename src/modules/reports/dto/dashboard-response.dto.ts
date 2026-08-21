@@ -1,68 +1,106 @@
+import { ApiProperty } from '@nestjs/swagger';
+
+class DashboardPeriodDto {
+  @ApiProperty({
+    example: '2026-08-01',
+    nullable: true,
+  })
+  fromDate!: string | null;
+
+  @ApiProperty({
+    example: '2026-08-15',
+    nullable: true,
+  })
+  toDate!: string | null;
+}
+
+class DashboardSalesSummaryDto {
+  @ApiProperty({ example: 12 })
+  saleCount!: number;
+
+  @ApiProperty({ example: '2450.00' })
+  grandTotal!: string;
+}
+
+class DashboardPurchaseSummaryDto {
+  @ApiProperty({ example: 4 })
+  purchaseOrderCount!: number;
+
+  @ApiProperty({ example: '1180.00' })
+  grandTotal!: string;
+}
+
+class DashboardPaymentSummaryDto {
+  @ApiProperty({ example: 7 })
+  receiptCount!: number;
+
+  @ApiProperty({ example: '1450.00' })
+  receiptTotal!: string;
+
+  @ApiProperty({ example: 3 })
+  paymentCount!: number;
+
+  @ApiProperty({ example: '820.00' })
+  paymentTotal!: string;
+}
+
+class DashboardInventorySummaryDto {
+  @ApiProperty({ example: 128 })
+  totalOnHandQuantity!: number;
+
+  @ApiProperty({ example: 24 })
+  distinctProductVariantCount!: number;
+}
+
+class DashboardAccountingSummaryDto {
+  @ApiProperty({ example: '5000.00' })
+  totalDebit!: string;
+
+  @ApiProperty({ example: '5000.00' })
+  totalCredit!: string;
+
+  @ApiProperty({ example: true })
+  balanced!: boolean;
+}
+
 /**
- * Explicit, typed dashboard summary DTO (locked spec: "never raw entity
- * dumps, only metrics genuinely derivable from real data — no fabricated
- * gross profit/COGS/tax"). Every field here is a real SQL-aggregated value
- * sourced from an already-built report/accounting service — this DTO is
- * purely a composition shape, never its own data source (see
- * DashboardService.computeDashboard()).
+ * Explicit, typed dashboard summary DTO. Every field here is derived from
+ * existing report/accounting services and never from fabricated metrics.
  */
 export class DashboardResponseDto {
-  period!: {
-    fromDate: string | null;
-    toDate: string | null;
-  };
+  @ApiProperty({ type: DashboardPeriodDto })
+  period!: DashboardPeriodDto;
 
+  @ApiProperty({ format: 'uuid' })
   companyId!: string;
+
+  @ApiProperty({ format: 'uuid', nullable: true })
   branchId!: string | null;
 
-  sales!: {
-    saleCount: number;
-    grandTotal: string;
-  };
+  @ApiProperty({ type: DashboardSalesSummaryDto })
+  sales!: DashboardSalesSummaryDto;
 
-  purchases!: {
-    purchaseOrderCount: number;
-    grandTotal: string;
-  };
+  @ApiProperty({ type: DashboardPurchaseSummaryDto })
+  purchases!: DashboardPurchaseSummaryDto;
 
-  payments!: {
-    receiptCount: number;
-    receiptTotal: string;
-    paymentCount: number;
-    paymentTotal: string;
-  };
+  @ApiProperty({ type: DashboardPaymentSummaryDto })
+  payments!: DashboardPaymentSummaryDto;
 
-  /** Real AR/AP aging totals (ArApAgingService), not a fabricated figure. */
+  @ApiProperty({ example: '950.00' })
   receivablesOutstanding!: string;
+
+  @ApiProperty({ example: '410.00' })
   payablesOutstanding!: string;
 
-  inventory!: {
-    totalOnHandQuantity: number;
-    distinctProductVariantCount: number;
-  };
+  @ApiProperty({ type: DashboardInventorySummaryDto })
+  inventory!: DashboardInventorySummaryDto;
 
-  /**
-   * Sourced from the already-built TrialBalanceService (never a duplicate
-   * Balance Sheet computation just for the dashboard) — totalDebit ===
-   * totalCredit is the fundamental accounting invariant, surfaced here so a
-   * dashboard consumer has a cheap sanity signal without calling
-   * GET /trial-balance separately.
-   */
-  accounting!: {
-    totalDebit: string;
-    totalCredit: string;
-    balanced: boolean;
-  };
+  @ApiProperty({ type: DashboardAccountingSummaryDto })
+  accounting!: DashboardAccountingSummaryDto;
 
-  /**
-   * When this response was actually computed (not when it was served) —
-   * present on both a fresh and a cached response so a client can always
-   * tell what data-freshness window it is looking at (locked spec
-   * requirement: "never silently present stale financial data as if it
-   * were live with no indication").
-   */
+  @ApiProperty({ example: '2026-08-15T09:00:00.000Z' })
   asOfTimestamp!: string;
 
-  /** True when this response was served from the Redis cache rather than computed fresh for this request. */
+  @ApiProperty({ example: false })
   cached!: boolean;
 }

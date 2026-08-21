@@ -2,6 +2,11 @@ import { Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Job, Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { QueueName } from './queue-names';
+import {
+  isOpenApiGenerationMode,
+  isWorkerRuntimeRole,
+} from '../../shared/utils/runtime-flags';
+import { MetricsRegistryService } from '../../observability/metrics/metrics-registry.service';
 
 /**
  * Base class for an in-process BullMQ worker (Phase 20, locked
@@ -29,6 +34,7 @@ export abstract class BaseQueueWorker<T extends object>
     private readonly queueName: QueueName,
     private readonly connection: Redis,
     private readonly concurrency: number = 5,
+    private readonly metrics?: MetricsRegistryService,
   ) {
     this.logger = new Logger(this.constructor.name);
   }
@@ -37,19 +43,46 @@ export abstract class BaseQueueWorker<T extends object>
   protected abstract process(job: Job<T>): Promise<void>;
 
   onModuleInit(): void {
+    if (isOpenApiGenerationMode() || !isWorkerRuntimeRole()) {
+      return;
+    }
+
     this.worker = new Worker<T>(
       this.queueName,
-      async (job: Job<T>) => this.process(job),
+      async (job: Job<T>) => {
+        const startedAt = Date.now();
+        try {
+          await this.process(job);
+          this.metrics?.recordBullMqJob(
+            this.queueName,
+            job.name,
+            'success',
+            Date.now() - startedAt,
+          );
+        } catch (error) {
+          this.metrics?.recordBullMqJob(
+            this.queueName,
+            job.name,
+            'failure',
+            Date.now() - startedAt,
+          );
+          throw error;
+        }
+      },
       { connection: this.connection, concurrency: this.concurrency },
     );
 
     this.worker.on('completed', (job: Job<T>) => {
-      this.logger.log(`Job ${job.id} (${job.name}) completed`);
+      const correlationId = this.resolveCorrelationId(job);
+      this.logger.log(
+        `Job ${job.id} (${job.name}) completed queue=${this.queueName} attempts=${job.attemptsMade + 1} correlationId=${correlationId ?? 'n/a'}`,
+      );
     });
 
     this.worker.on('failed', (job: Job<T> | undefined, error: Error) => {
+      const correlationId = job ? this.resolveCorrelationId(job) : undefined;
       this.logger.warn(
-        `Job ${job?.id ?? 'unknown'} (${job?.name ?? 'unknown'}) failed (attempt ${job?.attemptsMade ?? '?'}): ${error.message}`,
+        `Job ${job?.id ?? 'unknown'} (${job?.name ?? 'unknown'}) failed queue=${this.queueName} attempt=${job ? job.attemptsMade + 1 : '?'} correlationId=${correlationId ?? 'n/a'}: ${error.message}`,
       );
     });
 
@@ -60,5 +93,10 @@ export abstract class BaseQueueWorker<T extends object>
 
   async onModuleDestroy(): Promise<void> {
     await this.worker?.close().catch(() => undefined);
+  }
+
+  private resolveCorrelationId(job: Job<T>): string | null {
+    const value = (job.data as Record<string, unknown>).correlationId;
+    return typeof value === 'string' ? value : null;
   }
 }

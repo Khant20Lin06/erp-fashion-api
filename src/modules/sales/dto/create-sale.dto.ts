@@ -55,6 +55,18 @@ export class CreateSaleDto {
   @MaxLength(1000)
   notes?: string;
 
+  /**
+   * Optional Promotion.code to apply at order level (Returns/Discounts/
+   * Loyalty phase, additive). Resolved and validated server-side inside
+   * the transaction (PromotionsService.resolveAndLockForUse) — never
+   * trusts a client-supplied discount amount for this. Applies on top of
+   * any per-item discountAmount already present on individual items.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  promotionCode?: string;
+
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })

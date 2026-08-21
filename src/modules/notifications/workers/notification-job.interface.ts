@@ -5,6 +5,7 @@
  */
 export interface NotificationJobData extends Record<string, unknown> {
   notificationId: string;
+  correlationId?: string | null;
 }
 
 export const SEND_NOTIFICATION_JOB = 'send-notification';

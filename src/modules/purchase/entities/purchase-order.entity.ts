@@ -183,4 +183,7 @@ export class PurchaseOrder extends BaseEntity {
 
   @OneToMany(() => PurchaseOrderItem, (item) => item.purchaseOrder)
   items?: PurchaseOrderItem[];
+
+  /** Query-only relation count populated by list queries when needed. */
+  itemCount?: number;
 }

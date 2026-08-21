@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import {
   IsEnum,
   IsInt,
@@ -34,6 +35,11 @@ export class CreateAttributeOptionDto {
 
   /** Only meaningful for kind=COLOR — validated in the service layer, not the DB. */
   @IsOptional()
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value !== 'string') return value;
+    const normalized = value.trim().toUpperCase();
+    return normalized === '' ? undefined : normalized;
+  })
   @IsString()
   @Matches(/^#[0-9A-Fa-f]{6}$/, {
     message: 'swatch must be a 6-digit hex color (e.g. #1A2B3C)',

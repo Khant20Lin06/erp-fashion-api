@@ -2,6 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import { Logger } from '@nestjs/common';
 import Redis from 'ioredis';
 import { RedisConfig } from '../../config/redis.config';
+import { isOpenApiGenerationMode } from '../../shared/utils/runtime-flags';
 
 export const BULLMQ_CONNECTION = Symbol('BULLMQ_CONNECTION');
 
@@ -22,15 +23,24 @@ const logger = new Logger('BullMqConnection');
  */
 export function createBullMqConnection(configService: ConfigService): Redis {
   const redisConfig = configService.get<RedisConfig>('redis')!;
+  const openApiGenerationMode = isOpenApiGenerationMode();
 
-  const client = new Redis({
-    host: redisConfig.host,
-    port: redisConfig.port,
-    password: redisConfig.password,
-    db: redisConfig.db,
+  const options = {
+    lazyConnect: openApiGenerationMode,
     maxRetriesPerRequest: null,
     enableReadyCheck: true,
-  });
+    connectTimeout: redisConfig.connectTimeoutMs,
+  };
+
+  const client = redisConfig.url
+    ? new Redis(redisConfig.url, options)
+    : new Redis({
+        host: redisConfig.host,
+        port: redisConfig.port,
+        password: redisConfig.password,
+        db: redisConfig.db,
+        ...options,
+      });
 
   client.on('error', (error: Error) => {
     // A Redis/BullMQ outage must never crash the API process — background

@@ -19,6 +19,8 @@ export function createKafkaClient(configService: ConfigService): Kafka {
     clientId: kafkaConfig.clientId,
     brokers: kafkaConfig.brokers,
     logLevel: logLevel.WARN,
+    connectionTimeout: kafkaConfig.connectionTimeoutMs,
+    requestTimeout: kafkaConfig.requestTimeoutMs,
     retry: {
       initialRetryTime: 300,
       retries: 5,

@@ -14,6 +14,7 @@ import { OrganizationModule } from '../organization/organization.module';
 import { CustomerSupplierModule } from '../customer-supplier/customer-supplier.module';
 import { SalesModule } from '../sales/sales.module';
 import { PurchaseModule } from '../purchase/purchase.module';
+import { SalesReturnsModule } from '../sales-returns/sales-returns.module';
 import { AccountingModule } from '../accounting/accounting.module';
 import { OutboxModule } from '../outbox/outbox.module';
 import { PaymentEventConsumerModule } from './consumers/payment-event-consumer.module';
@@ -57,6 +58,7 @@ import { PaymentEventConsumerModule } from './consumers/payment-event-consumer.m
     CustomerSupplierModule,
     SalesModule,
     PurchaseModule,
+    SalesReturnsModule,
     AccountingModule,
     OutboxModule,
     PaymentEventConsumerModule,

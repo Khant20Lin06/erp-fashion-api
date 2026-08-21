@@ -139,6 +139,6 @@ describe('NotificationWorker', () => {
     // BULLMQ_CONNECTION, NotificationsService, and NOTIFICATION_PROVIDERS —
     // there is no Payment/JournalEntry/Inventory repository or service in
     // its constructor signature at all.
-    expect(NotificationWorker.length).toBe(3);
+    expect(NotificationWorker.length).toBe(5);
   });
 });

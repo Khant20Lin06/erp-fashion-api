@@ -1,4 +1,4 @@
-import { IsDateString, IsOptional, IsUUID } from 'class-validator';
+import { IsDateString, IsOptional, IsString, IsUUID } from 'class-validator';
 
 export class SalesReportQueryDto {
   @IsOptional()
@@ -16,4 +16,8 @@ export class SalesReportQueryDto {
   @IsOptional()
   @IsDateString()
   toDate?: string;
+
+  @IsOptional()
+  @IsString()
+  granularity?: string;
 }

@@ -185,7 +185,7 @@ export class AccountingPostingService {
       // RECEIPT: Dr cash/bank / Cr receivable
       debitAccountId = cashBankAccount.id;
       creditAccountId = receivableAccount.id;
-    } else {
+    } else if (payment.direction === PaymentDirection.Payment) {
       if (!supplier) {
         throw new AppException(
           ErrorCode.ValidationError,
@@ -200,6 +200,25 @@ export class AccountingPostingService {
       // PAYMENT: Dr payable / Cr cash/bank
       debitAccountId = payableAccount.id;
       creditAccountId = cashBankAccount.id;
+    } else {
+      // REFUND (Returns/Discounts/Loyalty phase): BLOCKED, not
+      // fabricated. A refund's correct debit side is a Sales Returns /
+      // contra-revenue account (Dr Sales Returns, Cr Cash/Bank) — never
+      // Customer.receivableAccountId, which represents "amount the
+      // customer owes us" and has no honest meaning here (the receivable
+      // was already settled by the original Sale/Payment; a refund does
+      // not reopen it). No salesReturnAccountId or equivalent mapping
+      // field exists anywhere in this codebase (confirmed by audit: grep
+      // across every entity for "AccountId" found only glAccountId/
+      // receivableAccountId/payableAccountId). Fabricating a reuse of
+      // receivableAccountId here would silently misclassify the GL entry.
+      // The Payment/PaymentAllocation/SaleReturn.refundedAmount side of a
+      // refund is fully implemented and correct; only its GL posting is
+      // blocked pending a genuinely new account-mapping field.
+      throw new AppException(
+        ErrorCode.UnprocessableEntity,
+        'REFUND payments cannot be posted to the General Ledger: no sales-return/contra-revenue account mapping exists in this codebase (see AccountingPostingService.postPayment() REFUND branch). The refund itself is still recorded (Payment + SaleReturn.refundedAmount); accounting posting is BLOCKED until a dedicated account-mapping field is added in a future phase.',
+      );
     }
 
     try {

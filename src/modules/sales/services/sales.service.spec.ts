@@ -17,6 +17,8 @@ import { SalesAccountStatus } from '../../sales-accounts/entities/sales-account-
 import { SalesAccountAccessService } from '../../sales-accounts/services/sales-account-access.service';
 import { CompanyStatus } from '../../organization/entities/company-status.enum';
 import { ErrorCode } from '../../../core/errors/error-codes';
+import { LoyaltyService } from '../../loyalty/services/loyalty.service';
+import { PromotionsService } from '../../promotions/services/promotions.service';
 
 describe('SalesService', () => {
   let service: SalesService;
@@ -39,6 +41,13 @@ describe('SalesService', () => {
   >;
   let salesAccountAccessService: jest.Mocked<
     Pick<SalesAccountAccessService, 'canAccessSalesAccount'>
+  >;
+  let loyaltyService: jest.Mocked<Pick<LoyaltyService, 'earnForSale'>>;
+  let promotionsService: jest.Mocked<
+    Pick<
+      PromotionsService,
+      'resolveAndLockForUse' | 'computeDiscountAmount' | 'incrementUsage'
+    >
   >;
   let queryBuilder: jest.Mocked<
     Pick<
@@ -145,6 +154,12 @@ describe('SalesService', () => {
     customersService = { findByIdInCompany: jest.fn() };
     productVariantsService = { findByIdInCompany: jest.fn() };
     salesAccountAccessService = { canAccessSalesAccount: jest.fn() };
+    loyaltyService = { earnForSale: jest.fn().mockResolvedValue(null) };
+    promotionsService = {
+      resolveAndLockForUse: jest.fn(),
+      computeDiscountAmount: jest.fn(),
+      incrementUsage: jest.fn().mockResolvedValue(undefined),
+    };
 
     service = new SalesService(
       saleRepository as unknown as Repository<Sale>,
@@ -155,6 +170,8 @@ describe('SalesService', () => {
       customersService as unknown as CustomersService,
       productVariantsService as unknown as ProductVariantsService,
       salesAccountAccessService as unknown as SalesAccountAccessService,
+      loyaltyService as unknown as LoyaltyService,
+      promotionsService as unknown as PromotionsService,
     );
   });
 

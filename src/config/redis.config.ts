@@ -6,6 +6,7 @@ export interface RedisConfig {
   port: number;
   password: string | undefined;
   db: number;
+  connectTimeoutMs: number;
 }
 
 export default registerAs('redis', (): RedisConfig => {
@@ -19,5 +20,9 @@ export default registerAs('redis', (): RedisConfig => {
     port: parseInt(process.env.REDIS_PORT ?? parsedUrl?.port ?? '6379', 10),
     password: process.env.REDIS_PASSWORD || parsedUrl?.password || undefined,
     db: parseInt((process.env.REDIS_DB ?? pathDb) || '0', 10),
+    connectTimeoutMs: parseInt(
+      process.env.REDIS_CONNECT_TIMEOUT_MS ?? '5000',
+      10,
+    ),
   };
 });

@@ -19,9 +19,12 @@ import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../rbac/guards/permission.guard';
 import { RequirePermission } from '../../rbac/decorators/require-permission.decorator';
 import { DataScopeService } from '../../rbac/services/data-scope.service';
+import { AuthorizationService } from '../../rbac/services/authorization.service';
 import { CurrentUser } from '../../../shared/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../auth/types/authenticated-user';
 import { resolveRequestCompanyId } from '../../master-data/utils/resolve-request-company-id';
+import { AppException } from '../../../core/errors/app.exception';
+import { ErrorCode } from '../../../core/errors/error-codes';
 
 const RESOURCE = 'sales';
 
@@ -40,6 +43,7 @@ export class SalesController {
   constructor(
     private readonly salesService: SalesService,
     private readonly dataScopeService: DataScopeService,
+    private readonly authorizationService: AuthorizationService,
   ) {}
 
   @Get()
@@ -87,6 +91,30 @@ export class SalesController {
       RESOURCE,
       dto.companyId,
     );
+
+    // Manual/promotion discount gate (Returns/Discounts/Loyalty phase,
+    // additive): sales.create alone lets a user record a zero-discount
+    // sale; applying ANY discount (a per-item discountAmount > 0 or a
+    // promotionCode) additionally requires sales.discount.apply — a
+    // dedicated, granular permission, never a hardcoded role check. This
+    // mirrors PermissionGuard's own imperative-check escape hatch
+    // (AuthorizationService.canAll), used here because the gate is
+    // conditional on request BODY content, not just the route.
+    const requestsAnyDiscount =
+      !!dto.promotionCode ||
+      dto.items.some((item) => Number(item.discountAmount ?? '0') > 0);
+    if (requestsAnyDiscount) {
+      const canApplyDiscount = await this.authorizationService.canAll(user.id, [
+        'sales.discount.apply',
+      ]);
+      if (!canApplyDiscount) {
+        throw new AppException(
+          ErrorCode.Forbidden,
+          'Applying a discount or promotion to a sale requires the sales.discount.apply permission',
+        );
+      }
+    }
+
     const entity = await this.salesService.create(companyId, user.id, dto);
     return toSaleResponseDto(entity);
   }

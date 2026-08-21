@@ -12,10 +12,7 @@ import { ApiTags } from '@nestjs/swagger';
 import { StockTransfersService } from '../services/stock-transfers.service';
 import { CreateStockTransferDto } from '../dto/create-stock-transfer.dto';
 import { ListStockTransfersDto } from '../dto/list-stock-transfers.dto';
-import {
-  StockTransferResponseDto,
-  toStockTransferResponseDto,
-} from '../dto/stock-transfer-response.dto';
+import { StockTransferResponseDto } from '../dto/stock-transfer-response.dto';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../rbac/guards/permission.guard';
 import { RequirePermission } from '../../rbac/decorators/require-permission.decorator';
@@ -51,11 +48,7 @@ export class StockTransfersController {
       RESOURCE,
       query.companyId,
     );
-    const result = await this.stockTransfersService.findAll(companyId, query);
-    return {
-      data: result.data.map(toStockTransferResponseDto),
-      meta: result.meta,
-    };
+    return this.stockTransfersService.findAllView(companyId, query);
   }
 
   @Get(':id')
@@ -71,11 +64,10 @@ export class StockTransfersController {
       RESOURCE,
       companyIdQuery,
     );
-    const entity = await this.stockTransfersService.findByIdInCompany(
+    return this.stockTransfersService.findViewByIdInCompany(
       id,
       companyId,
     );
-    return toStockTransferResponseDto(entity);
   }
 
   @Post()
@@ -90,11 +82,10 @@ export class StockTransfersController {
       RESOURCE,
       dto.companyId,
     );
-    const entity = await this.stockTransfersService.create(
+    return this.stockTransfersService.createView(
       companyId,
       user.id,
       dto,
     );
-    return toStockTransferResponseDto(entity);
   }
 }

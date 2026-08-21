@@ -39,7 +39,10 @@ export class WarehousesService {
     private readonly branchesService: BranchesService,
   ) {}
 
-  async findAll(query: ListWarehousesDto): Promise<PaginatedWarehouses> {
+  async findAll(
+    companyId: string,
+    query: ListWarehousesDto,
+  ): Promise<PaginatedWarehouses> {
     const page = query.page ?? DEFAULT_PAGE;
     const limit = query.limit ?? DEFAULT_LIMIT;
     const sortField = resolveSortField(
@@ -48,8 +51,7 @@ export class WarehousesService {
       'createdAt',
     );
 
-    const where: Record<string, unknown> = {};
-    if (query.companyId) where.companyId = query.companyId;
+    const where: Record<string, unknown> = { companyId };
     if (query.branchId) where.branchId = query.branchId;
     if (query.status) where.status = query.status;
 
@@ -71,6 +73,16 @@ export class WarehousesService {
     return warehouse;
   }
 
+  async findByIdInCompany(id: string, companyId: string): Promise<Warehouse> {
+    const warehouse = await this.warehouseRepository.findOne({
+      where: { id, companyId },
+    });
+    if (!warehouse) {
+      throw new AppException(ErrorCode.NotFound, 'Warehouse not found');
+    }
+    return warehouse;
+  }
+
   /**
    * Hierarchy + cross-company integrity validation on create (Phase 07 §12,
    * §29 — the phase's own "critical integrity rule"): companyId must
@@ -79,10 +91,8 @@ export class WarehousesService {
    * submitted companyId. Client-submitted companyId/branchId are never
    * trusted beyond using them to look the real rows up server-side.
    */
-  async create(dto: CreateWarehouseDto): Promise<Warehouse> {
-    const company = await this.companiesService.findActiveByIdOrNull(
-      dto.companyId,
-    );
+  async create(companyId: string, dto: CreateWarehouseDto): Promise<Warehouse> {
+    const company = await this.companiesService.findActiveByIdOrNull(companyId);
     if (!company) {
       throw new AppException(
         ErrorCode.ValidationError,
@@ -100,7 +110,7 @@ export class WarehousesService {
       );
     }
 
-    if (branch.companyId !== dto.companyId) {
+    if (branch.companyId !== companyId) {
       throw new AppException(
         ErrorCode.ValidationError,
         'branchId does not belong to the specified companyId',
@@ -108,7 +118,7 @@ export class WarehousesService {
     }
 
     const existing = await this.warehouseRepository.findOne({
-      where: { companyId: dto.companyId, code: dto.code },
+      where: { companyId, code: dto.code },
     });
     if (existing) {
       throw new AppException(
@@ -118,7 +128,7 @@ export class WarehousesService {
     }
 
     const warehouse = this.warehouseRepository.create({
-      companyId: dto.companyId,
+      companyId,
       branchId: dto.branchId,
       code: dto.code,
       name: dto.name,
@@ -131,8 +141,12 @@ export class WarehousesService {
   }
 
   /** companyId/branchId are immutable after creation (Phase 07 §64) — not accepted here. */
-  async update(id: string, dto: UpdateWarehouseDto): Promise<Warehouse> {
-    const warehouse = await this.findById(id);
+  async update(
+    id: string,
+    companyId: string,
+    dto: UpdateWarehouseDto,
+  ): Promise<Warehouse> {
+    const warehouse = await this.findByIdInCompany(id, companyId);
 
     if (dto.name !== undefined) warehouse.name = dto.name;
     if (dto.type !== undefined) warehouse.type = dto.type;
@@ -141,21 +155,21 @@ export class WarehousesService {
     return this.warehouseRepository.save(warehouse);
   }
 
-  async activate(id: string): Promise<Warehouse> {
-    const warehouse = await this.findById(id);
+  async activate(id: string, companyId: string): Promise<Warehouse> {
+    const warehouse = await this.findByIdInCompany(id, companyId);
     warehouse.status = WarehouseStatus.Active;
     return this.warehouseRepository.save(warehouse);
   }
 
-  async deactivate(id: string): Promise<Warehouse> {
-    const warehouse = await this.findById(id);
+  async deactivate(id: string, companyId: string): Promise<Warehouse> {
+    const warehouse = await this.findByIdInCompany(id, companyId);
     warehouse.status = WarehouseStatus.Inactive;
     return this.warehouseRepository.save(warehouse);
   }
 
   /** Soft delete only (Phase 07 §31) — no business records exist yet to block on. */
-  async remove(id: string): Promise<void> {
-    const warehouse = await this.findById(id);
+  async remove(id: string, companyId: string): Promise<void> {
+    const warehouse = await this.findByIdInCompany(id, companyId);
     await this.warehouseRepository.softRemove(warehouse);
   }
 }

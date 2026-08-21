@@ -11,6 +11,8 @@ import { OrganizationModule } from '../organization/organization.module';
 import { CustomerSupplierModule } from '../customer-supplier/customer-supplier.module';
 import { ProductsModule } from '../products/products.module';
 import { SalesAccountsModule } from '../sales-accounts/sales-accounts.module';
+import { LoyaltyModule } from '../loyalty/loyalty.module';
+import { PromotionsModule } from '../promotions/promotions.module';
 
 /**
  * Phase 12 — Sales. A single flat module directory
@@ -30,6 +32,8 @@ import { SalesAccountsModule } from '../sales-accounts/sales-accounts.module';
     CustomerSupplierModule,
     ProductsModule,
     SalesAccountsModule,
+    LoyaltyModule,
+    PromotionsModule,
   ],
   controllers: [SalesController],
   providers: [SalesService],

@@ -79,16 +79,29 @@ describeIfDb('User / Employee / Account Management (e2e)', () => {
 
   const password = 'correct-horse-battery-staple';
   const prefix = 'UEA-E2E';
+  const authCookieByEmail = new Map<string, string>();
 
   async function loginAndGetCookie(email: string): Promise<string> {
+    const cached = authCookieByEmail.get(email);
+    if (cached) {
+      return cached;
+    }
+
     const response = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
       .send({ email, password });
 
     const setCookie = response.headers['set-cookie'] as
       string[] | string | undefined;
-    const cookieHeader = Array.isArray(setCookie) ? setCookie[0] : setCookie;
-    return String(cookieHeader).split(';')[0];
+    const cookieSource = Array.isArray(setCookie)
+      ? setCookie.join('; ')
+      : String(setCookie);
+    const match = cookieSource.match(/fashion_erp_access_token=([^;]+)/);
+    const cookie = match ? `fashion_erp_access_token=${match[1]}` : '';
+    if (cookie) {
+      authCookieByEmail.set(email, cookie);
+    }
+    return cookie;
   }
 
   async function createCompany(cookie: string): Promise<CompanyBody> {
@@ -361,6 +374,24 @@ describeIfDb('User / Employee / Account Management (e2e)', () => {
 
       expect(response.status).toBe(403);
     });
+
+    it("rejects reading another user's memberships without user_organizations.read", async () => {
+      const superAdminCookie = await loginAndGetCookie(superAdminUser.email);
+      const plainCookie = await loginAndGetCookie(plainUser.email);
+      const company = await createCompany(superAdminCookie);
+      const otherUser = await createUser(superAdminCookie);
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/users/${otherUser.id}/companies`)
+        .set('Cookie', [superAdminCookie])
+        .send({ companyId: company.id });
+
+      const response = await request(app.getHttpServer())
+        .get(`/api/v1/users/${otherUser.id}/companies`)
+        .set('Cookie', [plainCookie]);
+
+      expect(response.status).toBe(403);
+    });
   });
 
   describe('User CRUD', () => {
@@ -478,14 +509,14 @@ describeIfDb('User / Employee / Account Management (e2e)', () => {
       const user = await createUser(cookie);
 
       const linkResponse = await request(app.getHttpServer())
-        .post(`/api/v1/employees/${employee1.id}/user`)
+        .post(`/api/v1/employees/${employee1.id}/user?companyId=${company.id}`)
         .set('Cookie', [cookie])
         .send({ userId: user.id });
       expect(linkResponse.status).toBe(201);
       expect((linkResponse.body as EmployeeBody).userId).toBe(user.id);
 
       const secondLinkResponse = await request(app.getHttpServer())
-        .post(`/api/v1/employees/${employee2.id}/user`)
+        .post(`/api/v1/employees/${employee2.id}/user?companyId=${company.id}`)
         .set('Cookie', [cookie])
         .send({ userId: user.id });
       expect(secondLinkResponse.status).toBe(409);
@@ -498,12 +529,14 @@ describeIfDb('User / Employee / Account Management (e2e)', () => {
       const employee = await createEmployee(cookie, company.id, branch.id);
       const user = await createUser(cookie);
       await request(app.getHttpServer())
-        .post(`/api/v1/employees/${employee.id}/user`)
+        .post(`/api/v1/employees/${employee.id}/user?companyId=${company.id}`)
         .set('Cookie', [cookie])
         .send({ userId: user.id });
 
       const terminateResponse = await request(app.getHttpServer())
-        .post(`/api/v1/employees/${employee.id}/terminate`)
+        .post(
+          `/api/v1/employees/${employee.id}/terminate?companyId=${company.id}`,
+        )
         .set('Cookie', [cookie]);
 
       expect(terminateResponse.status).toBe(200);
@@ -519,6 +552,28 @@ describeIfDb('User / Employee / Account Management (e2e)', () => {
   });
 
   describe('Membership — company-before-branch rule (LOCKED §4)', () => {
+    it('allows a plain authenticated user to read their own company memberships', async () => {
+      const superAdminCookie = await loginAndGetCookie(superAdminUser.email);
+      const plainCookie = await loginAndGetCookie(plainUser.email);
+      const company = await createCompany(superAdminCookie);
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/users/${plainUser.id}/companies`)
+        .set('Cookie', [superAdminCookie])
+        .send({ companyId: company.id });
+
+      const response = await request(app.getHttpServer())
+        .get(`/api/v1/users/${plainUser.id}/companies`)
+        .set('Cookie', [plainCookie]);
+
+      expect(response.status).toBe(200);
+      expect(response.body as Array<{ companyId: string }>).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ companyId: company.id }),
+        ]),
+      );
+    });
+
     it('rejects branch assignment when the user has no company membership yet', async () => {
       const cookie = await loginAndGetCookie(superAdminUser.email);
       const company = await createCompany(cookie);
@@ -724,7 +779,7 @@ describeIfDb('User / Employee / Account Management (e2e)', () => {
       const employee = await createEmployee(cookie, company.id, branch.id);
       const user = await createUser(cookie);
       await request(app.getHttpServer())
-        .post(`/api/v1/employees/${employee.id}/user`)
+        .post(`/api/v1/employees/${employee.id}/user?companyId=${company.id}`)
         .set('Cookie', [cookie])
         .send({ userId: user.id });
 
@@ -746,7 +801,7 @@ describeIfDb('User / Employee / Account Management (e2e)', () => {
       const employeeA = await createEmployee(cookie, company.id, branch.id);
       const userA = await createUser(cookie);
       await request(app.getHttpServer())
-        .post(`/api/v1/employees/${employeeA.id}/user`)
+        .post(`/api/v1/employees/${employeeA.id}/user?companyId=${company.id}`)
         .set('Cookie', [cookie])
         .send({ userId: userA.id });
       const accountA = await createSalesAccount(cookie, company.id, branch.id);
@@ -754,7 +809,7 @@ describeIfDb('User / Employee / Account Management (e2e)', () => {
       const employeeB = await createEmployee(cookie, company.id, branch.id);
       const userB = await createUser(cookie);
       await request(app.getHttpServer())
-        .post(`/api/v1/employees/${employeeB.id}/user`)
+        .post(`/api/v1/employees/${employeeB.id}/user?companyId=${company.id}`)
         .set('Cookie', [cookie])
         .send({ userId: userB.id });
       const accountB = await createSalesAccount(cookie, company.id, branch.id);
@@ -788,7 +843,7 @@ describeIfDb('User / Employee / Account Management (e2e)', () => {
       const realUser = await createUser(cookie);
       const attackerUser = await createUser(cookie);
       await request(app.getHttpServer())
-        .post(`/api/v1/employees/${employee.id}/user`)
+        .post(`/api/v1/employees/${employee.id}/user?companyId=${company.id}`)
         .set('Cookie', [cookie])
         .send({ userId: realUser.id });
       const account = await createSalesAccount(cookie, company.id, branch.id);
@@ -808,7 +863,7 @@ describeIfDb('User / Employee / Account Management (e2e)', () => {
       const employee = await createEmployee(cookie, company.id, branch.id);
       const user = await createUser(cookie);
       await request(app.getHttpServer())
-        .post(`/api/v1/employees/${employee.id}/user`)
+        .post(`/api/v1/employees/${employee.id}/user?companyId=${company.id}`)
         .set('Cookie', [cookie])
         .send({ userId: user.id });
       const account = await createSalesAccount(cookie, company.id, branch.id);
@@ -839,9 +894,12 @@ describeIfDb('User / Employee / Account Management (e2e)', () => {
   describe('IDOR / cross-company isolation', () => {
     it('returns 404 for a nonexistent employee id', async () => {
       const cookie = await loginAndGetCookie(superAdminUser.email);
+      const company = await createCompany(cookie);
 
       const response = await request(app.getHttpServer())
-        .get('/api/v1/employees/00000000-0000-0000-0000-000000000000')
+        .get(
+          `/api/v1/employees/00000000-0000-0000-0000-000000000000?companyId=${company.id}`,
+        )
         .set('Cookie', [cookie]);
 
       expect(response.status).toBe(404);

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { StockMovement } from '../entities/stock-movement.entity';
 import { WarehouseStock } from '../entities/warehouse-stock.entity';
 import { ListInventoryLedgerDto } from '../dto/list-inventory-ledger.dto';
@@ -11,9 +11,28 @@ import {
   DEFAULT_PAGE,
 } from '../../../shared/dto/pagination.dto';
 import { resolveSortField } from '../../../shared/dto/resolve-sort-field';
+import {
+  InventoryLedgerResponseDto,
+  toInventoryLedgerResponseDto,
+} from '../dto/inventory-ledger-response.dto';
+import { Warehouse } from '../../organization/entities/warehouse.entity';
+import { ProductVariant } from '../../products/entities/product-variant.entity';
+import { ProductVariantAttribute } from '../../products/entities/product-variant-attribute.entity';
+import { User } from '../../users/entities/user.entity';
+import { Sale } from '../../sales/entities/sale.entity';
+import { GoodsReceipt } from '../entities/goods-receipt.entity';
+import { StockTransfer } from '../entities/stock-transfer.entity';
+import { StockAdjustment } from '../entities/stock-adjustment.entity';
+import { StockMovementReferenceType } from '../entities/stock-movement-reference-type.enum';
+import { SaleReturn } from '../../sales-returns/entities/sale-return.entity';
 
 export interface PaginatedStockMovements {
   data: StockMovement[];
+  meta: { page: number; limit: number; total: number };
+}
+
+export interface PaginatedInventoryLedgerRows {
+  data: InventoryLedgerResponseDto[];
   meta: { page: number; limit: number; total: number };
 }
 
@@ -62,7 +81,36 @@ export class InventoryLedgerService {
     private readonly stockMovementRepository: Repository<StockMovement>,
     @InjectRepository(WarehouseStock)
     private readonly warehouseStockRepository: Repository<WarehouseStock>,
+    @InjectRepository(Warehouse)
+    private readonly warehouseRepository: Repository<Warehouse>,
+    @InjectRepository(ProductVariant)
+    private readonly productVariantRepository: Repository<ProductVariant>,
+    @InjectRepository(ProductVariantAttribute)
+    private readonly productVariantAttributeRepository: Repository<ProductVariantAttribute>,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+    @InjectRepository(Sale)
+    private readonly saleRepository: Repository<Sale>,
+    @InjectRepository(GoodsReceipt)
+    private readonly goodsReceiptRepository: Repository<GoodsReceipt>,
+    @InjectRepository(StockTransfer)
+    private readonly stockTransferRepository: Repository<StockTransfer>,
+    @InjectRepository(StockAdjustment)
+    private readonly stockAdjustmentRepository: Repository<StockAdjustment>,
+    @InjectRepository(SaleReturn)
+    private readonly saleReturnRepository: Repository<SaleReturn>,
   ) {}
+
+  async findAllView(
+    companyId: string,
+    query: ListInventoryLedgerDto,
+  ): Promise<PaginatedInventoryLedgerRows> {
+    const result = await this.findAll(companyId, query);
+    return {
+      data: await this.enrichMovements(result.data),
+      meta: result.meta,
+    };
+  }
 
   /**
    * Rejects fromDate > toDate with a clear 400 — never silently swaps them
@@ -166,6 +214,18 @@ export class InventoryLedgerService {
     return movement;
   }
 
+  async findByIdViewInCompany(
+    id: string,
+    companyId: string,
+  ): Promise<InventoryLedgerResponseDto> {
+    const movement = await this.findByIdInCompany(id, companyId);
+    const [view] = await this.enrichMovements([movement]);
+    if (!view) {
+      throw new AppException(ErrorCode.NotFound, 'Stock movement not found');
+    }
+    return view;
+  }
+
   /**
    * Stock Card (Phase 15 locked scope C): every StockMovement for exactly
    * one (warehouseId, productVariantId) pair, in chronological order
@@ -255,4 +315,159 @@ export class InventoryLedgerService {
       reconciled: difference === 0,
     };
   }
+
+  private async enrichMovements(
+    movements: StockMovement[],
+  ): Promise<InventoryLedgerResponseDto[]> {
+    if (movements.length === 0) {
+      return [];
+    }
+
+    const warehouseIds = unique(movements.map((movement) => movement.warehouseId));
+    const productVariantIds = unique(
+      movements.map((movement) => movement.productVariantId),
+    );
+    const userIds = unique(
+      movements
+        .map((movement) => movement.createdBy)
+        .filter((value): value is string => Boolean(value)),
+    );
+
+    const [
+      warehouses,
+      variants,
+      variantAttributes,
+      users,
+      referenceNumbers,
+    ] = await Promise.all([
+      this.warehouseRepository.find({ where: { id: In(warehouseIds) } }),
+      this.productVariantRepository.find({
+        where: { id: In(productVariantIds) },
+        relations: { product: true },
+      }),
+      this.productVariantAttributeRepository.find({
+        where: { variantId: In(productVariantIds) },
+        relations: { option: true },
+      }),
+      userIds.length > 0
+        ? this.userRepository.find({ where: { id: In(userIds) } })
+        : Promise.resolve([]),
+      this.resolveReferenceNumbers(movements),
+    ]);
+
+    const warehouseNames = new Map(
+      warehouses.map((warehouse) => [warehouse.id, warehouse.name]),
+    );
+    const variantsById = new Map(variants.map((variant) => [variant.id, variant]));
+    const usersById = new Map(users.map((user) => [user.id, user]));
+
+    const variantLabels = new Map<string, string>();
+    for (const variantId of productVariantIds) {
+      const label = variantAttributes
+        .filter((attribute) => attribute.variantId === variantId)
+        .sort((a, b) => a.kind.localeCompare(b.kind))
+        .map((attribute) => attribute.option.value.trim())
+        .filter(Boolean)
+        .join(' / ');
+
+      if (label) {
+        variantLabels.set(variantId, label);
+      }
+    }
+
+    return movements.map((movement) => {
+      const variant = variantsById.get(movement.productVariantId);
+      const createdByUser = movement.createdBy
+        ? usersById.get(movement.createdBy)
+        : undefined;
+
+      return toInventoryLedgerResponseDto(movement, {
+        warehouseName: warehouseNames.get(movement.warehouseId) ?? null,
+        productName: variant?.product?.name ?? null,
+        sku: variant?.sku ?? null,
+        variantLabel: variantLabels.get(movement.productVariantId) ?? null,
+        referenceNumber:
+          referenceNumbers.get(
+            `${movement.referenceType}:${movement.referenceId}`,
+          ) ?? movement.referenceId,
+        createdByName: createdByUser?.displayName ?? null,
+      });
+    });
+  }
+
+  private async resolveReferenceNumbers(
+    movements: StockMovement[],
+  ): Promise<Map<string, string>> {
+    const byType = new Map<StockMovementReferenceType, string[]>();
+
+    for (const movement of movements) {
+      const ids = byType.get(movement.referenceType) ?? [];
+      ids.push(movement.referenceId);
+      byType.set(movement.referenceType, ids);
+    }
+
+    const pairs = await Promise.all([
+      this.loadReferencePairs(
+        StockMovementReferenceType.Sale,
+        byType.get(StockMovementReferenceType.Sale),
+        this.saleRepository,
+        'saleNumber',
+      ),
+      this.loadReferencePairs(
+        StockMovementReferenceType.GoodsReceipt,
+        byType.get(StockMovementReferenceType.GoodsReceipt),
+        this.goodsReceiptRepository,
+        'receiptNumber',
+      ),
+      this.loadReferencePairs(
+        StockMovementReferenceType.StockTransfer,
+        byType.get(StockMovementReferenceType.StockTransfer),
+        this.stockTransferRepository,
+        'transferNumber',
+      ),
+      this.loadReferencePairs(
+        StockMovementReferenceType.StockAdjustment,
+        byType.get(StockMovementReferenceType.StockAdjustment),
+        this.stockAdjustmentRepository,
+        'adjustmentNumber',
+      ),
+      this.loadReferencePairs(
+        StockMovementReferenceType.SaleReturn,
+        byType.get(StockMovementReferenceType.SaleReturn),
+        this.saleReturnRepository,
+        'returnNumber',
+      ),
+    ]);
+
+    return new Map(pairs.flat());
+  }
+
+  private async loadReferencePairs<
+    T extends { id: string } & Record<K, string>,
+    K extends keyof T,
+  >(
+    type: StockMovementReferenceType,
+    ids: string[] | undefined,
+    repository: Repository<T>,
+    field: K,
+  ): Promise<Array<[string, string]>> {
+    const uniqueIds = unique(ids ?? []);
+    if (uniqueIds.length === 0) {
+      return [];
+    }
+
+    const rows = await repository.find({
+      where: { id: In(uniqueIds) } as never,
+      select: ['id', field] as Array<keyof T>,
+    });
+
+    return rows.map((row) => [
+      `${type}:${row.id}`,
+      String(row[field]),
+    ]);
+  }
+}
+
+function unique(values: string[]): string[] {
+  return Array.from(new Set(values));
 }

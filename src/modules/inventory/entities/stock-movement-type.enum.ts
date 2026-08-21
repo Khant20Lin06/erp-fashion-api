@@ -13,4 +13,12 @@ export enum StockMovementType {
   TransferOut = 'TRANSFER_OUT',
   Adjustment = 'ADJUSTMENT',
   OpeningBalance = 'OPENING_BALANCE',
+  /**
+   * Additive member (Returns/Discounts/Loyalty phase): a confirmed
+   * SaleReturnItem with condition=RESTOCK. Only this movement type
+   * increases onHandQuantity; a DAMAGED-condition item still writes a
+   * traceable movement but with quantityChange=0 (see
+   * SaleReturnsService.confirm()).
+   */
+  SaleReturn = 'SALE_RETURN',
 }

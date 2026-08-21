@@ -1,5 +1,13 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import {
+  ApiBadRequestResponse,
+  ApiBearerAuth,
+  ApiForbiddenResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+  ApiUnauthorizedResponse,
+} from '@nestjs/swagger';
 import { DashboardService } from '../services/dashboard.service';
 import { DashboardQueryDto } from '../dto/dashboard-query.dto';
 import { DashboardResponseDto } from '../dto/dashboard-response.dto';
@@ -11,6 +19,7 @@ import { CurrentUser } from '../../../shared/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../auth/types/authenticated-user';
 import { resolveRequestCompanyBranchScope } from '../../master-data/utils/resolve-request-company-branch-scope';
 import { validateDateRange } from '../../../shared/utils/validate-date-range';
+import { ErrorResponseDto } from '../../../common/swagger/dto/error-response.dto';
 
 const RESOURCE = 'reports';
 
@@ -32,6 +41,29 @@ export class DashboardController {
 
   @Get()
   @RequirePermission('reports.dashboard.read')
+  @ApiBearerAuth('bearerAuth')
+  @ApiOperation({
+    summary:
+      'Return the cached-or-fresh operational dashboard summary for the current scope',
+  })
+  @ApiOkResponse({
+    type: DashboardResponseDto,
+    description:
+      'Dashboard metrics constrained by DataScope company/branch visibility and safe Redis cache keys.',
+  })
+  @ApiBadRequestResponse({
+    type: ErrorResponseDto,
+    description: 'Validation failed for query parameters or date range.',
+  })
+  @ApiUnauthorizedResponse({
+    type: ErrorResponseDto,
+    description: 'Missing, invalid, expired, or revoked JWT session.',
+  })
+  @ApiForbiddenResponse({
+    type: ErrorResponseDto,
+    description:
+      'The authenticated user lacks the required permission or scope for this dashboard.',
+  })
   async get(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: DashboardQueryDto,

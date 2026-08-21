@@ -26,6 +26,7 @@ import { Supplier as SupplierEntity } from '../../customer-supplier/entities/sup
 import { SupplierStatus } from '../../customer-supplier/entities/supplier-status.enum';
 import { SalesService } from '../../sales/services/sales.service';
 import { PurchaseOrdersService } from '../../purchase/services/purchase-orders.service';
+import { SaleReturnsService } from '../../sales-returns/services/sale-returns.service';
 import { AccountingPostingService } from '../../accounting/services/accounting-posting.service';
 import { AppException } from '../../../core/errors/app.exception';
 import { ErrorCode } from '../../../core/errors/error-codes';
@@ -60,6 +61,7 @@ const VALID_DIRECTION_REFERENCE_PAIRS: Record<
 > = {
   [PaymentDirection.Receipt]: PaymentReferenceType.Sale,
   [PaymentDirection.Payment]: PaymentReferenceType.PurchaseOrder,
+  [PaymentDirection.Refund]: PaymentReferenceType.SaleReturn,
 };
 
 /**
@@ -85,6 +87,7 @@ export class PaymentsService {
     private readonly paymentMethodsService: PaymentMethodsService,
     private readonly salesService: SalesService,
     private readonly purchaseOrdersService: PurchaseOrdersService,
+    private readonly saleReturnsService: SaleReturnsService,
     private readonly accountingPostingService: AccountingPostingService,
     private readonly outboxService: OutboxService,
     private readonly requestContextService: RequestContextService,
@@ -213,11 +216,14 @@ export class PaymentsService {
     customerId?: string,
     supplierId?: string,
   ): Promise<void> {
-    if (direction === PaymentDirection.Receipt) {
+    if (
+      direction === PaymentDirection.Receipt ||
+      direction === PaymentDirection.Refund
+    ) {
       if (!customerId || supplierId) {
         throw new AppException(
           ErrorCode.ValidationError,
-          'RECEIPT payments require customerId to be set and supplierId to be omitted',
+          `${direction} payments require customerId to be set and supplierId to be omitted`,
         );
       }
       const customer = await this.customersService.findByIdInCompany(
@@ -449,12 +455,21 @@ export class PaymentsService {
               userId,
               manager,
             );
-          } else {
+          } else if (
+            target.referenceType === PaymentReferenceType.PurchaseOrder
+          ) {
             await this.purchaseOrdersService.applyPayment(
               target.referenceId,
               companyId,
               totalForTarget,
               userId,
+              manager,
+            );
+          } else {
+            await this.saleReturnsService.applyRefund(
+              target.referenceId,
+              companyId,
+              totalForTarget,
               manager,
             );
           }
@@ -524,14 +539,24 @@ export class PaymentsService {
             })
           : null;
 
-        await this.accountingPostingService.postPayment(
-          savedPayment,
-          paymentMethodForPosting,
-          customerForPosting,
-          supplierForPosting,
-          userId,
-          manager,
-        );
+        // REFUND is explicitly excluded from GL posting (Returns/
+        // Discounts/Loyalty phase, BLOCKED — see
+        // AccountingPostingService's own docblock on why no account
+        // mapping exists for it). The refund itself (Payment row,
+        // PaymentAllocation, SaleReturn.refundedAmount) is still fully
+        // recorded above; only the JournalEntry step is skipped, so a
+        // REFUND payment does not fail merely because accounting
+        // integration for it is not yet configurable.
+        if (savedPayment.direction !== PaymentDirection.Refund) {
+          await this.accountingPostingService.postPayment(
+            savedPayment,
+            paymentMethodForPosting,
+            customerForPosting,
+            supplierForPosting,
+            userId,
+            manager,
+          );
+        }
 
         // Phase 18 addition (D1-D10, LOCKED, the one authorized cross-phase
         // call this phase adds to this method): writes a `payment.confirmed`

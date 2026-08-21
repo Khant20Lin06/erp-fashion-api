@@ -28,7 +28,9 @@ describe('ProductsService', () => {
   let productRepository: jest.Mocked<
     Pick<Repository<Product>, 'findOne' | 'softRemove' | 'createQueryBuilder'>
   >;
-  let variantRepository: jest.Mocked<Pick<Repository<ProductVariant>, 'count'>>;
+  let variantRepository: jest.Mocked<
+    Pick<Repository<ProductVariant>, 'find' | 'softRemove'>
+  >;
   let companiesService: jest.Mocked<
     Pick<CompaniesService, 'findActiveByIdOrNull'>
   >;
@@ -127,7 +129,7 @@ describe('ProductsService', () => {
       softRemove: jest.fn(),
       createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
     };
-    variantRepository = { count: jest.fn() };
+    variantRepository = { find: jest.fn(), softRemove: jest.fn() };
     companiesService = { findActiveByIdOrNull: jest.fn() };
     categoriesService = { findByIdInCompany: jest.fn() };
     brandsService = { findByIdInCompany: jest.fn() };
@@ -339,23 +341,33 @@ describe('ProductsService', () => {
   });
 
   describe('remove', () => {
-    it('rejects deletion while active variants exist (409, no orphaning)', async () => {
+    it('soft-deletes product variants before deleting the product', async () => {
       productRepository.findOne.mockResolvedValue(buildProduct());
-      variantRepository.count.mockResolvedValue(1);
-
-      await expect(
-        service.remove('product-1', 'company-a'),
-      ).rejects.toMatchObject({ errorCode: ErrorCode.Conflict });
-      expect(productRepository.softRemove).not.toHaveBeenCalled();
-    });
-
-    it('soft-deletes a product with no active variants', async () => {
-      const product = buildProduct();
-      productRepository.findOne.mockResolvedValue(product);
-      variantRepository.count.mockResolvedValue(0);
+      const variants = [
+        { id: 'variant-1', productId: 'product-1' },
+        { id: 'variant-2', productId: 'product-1' },
+      ] as ProductVariant[];
+      variantRepository.find.mockResolvedValue(variants);
 
       await service.remove('product-1', 'company-a');
 
+      expect(variantRepository.find).toHaveBeenCalledWith({
+        where: { productId: 'product-1', companyId: 'company-a' },
+      });
+      expect(variantRepository.softRemove).toHaveBeenCalledWith(variants);
+      expect(productRepository.softRemove).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'product-1' }),
+      );
+    });
+
+    it('soft-deletes a product with no variants', async () => {
+      const product = buildProduct();
+      productRepository.findOne.mockResolvedValue(product);
+      variantRepository.find.mockResolvedValue([]);
+
+      await service.remove('product-1', 'company-a');
+
+      expect(variantRepository.softRemove).not.toHaveBeenCalled();
       expect(productRepository.softRemove).toHaveBeenCalledWith(product);
     });
   });

@@ -1,5 +1,13 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import {
+  ApiBadRequestResponse,
+  ApiBearerAuth,
+  ApiForbiddenResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+  ApiUnauthorizedResponse,
+} from '@nestjs/swagger';
 import {
   TrialBalanceService,
   TrialBalanceResult,
@@ -12,6 +20,8 @@ import { DataScopeService } from '../../rbac/services/data-scope.service';
 import { CurrentUser } from '../../../shared/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../auth/types/authenticated-user';
 import { resolveRequestCompanyBranchScope } from '../../master-data/utils/resolve-request-company-branch-scope';
+import { TrialBalanceResponseDto } from '../dto/trial-balance-response.dto';
+import { ErrorResponseDto } from '../../../common/swagger/dto/error-response.dto';
 
 const RESOURCE = 'trial_balance';
 
@@ -27,6 +37,29 @@ export class TrialBalanceController {
 
   @Get()
   @RequirePermission('trial_balance.read')
+  @ApiBearerAuth('bearerAuth')
+  @ApiOperation({
+    summary:
+      'Return the posted-trial-balance snapshot for the requested as-of date',
+  })
+  @ApiOkResponse({
+    type: TrialBalanceResponseDto,
+    description:
+      'Trial balance rows grouped by account, constrained by DataScope company/branch visibility.',
+  })
+  @ApiBadRequestResponse({
+    type: ErrorResponseDto,
+    description: 'Validation failed for query parameters.',
+  })
+  @ApiUnauthorizedResponse({
+    type: ErrorResponseDto,
+    description: 'Missing, invalid, expired, or revoked JWT session.',
+  })
+  @ApiForbiddenResponse({
+    type: ErrorResponseDto,
+    description:
+      'The authenticated user lacks the required permission or scope for this report.',
+  })
   async query(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: TrialBalanceQueryDto,

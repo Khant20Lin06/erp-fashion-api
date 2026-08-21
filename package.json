@@ -8,6 +8,8 @@
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "openapi:generate": "nest build && node dist/scripts/generate-openapi.js",
+    "openapi:validate": "nest build && node dist/scripts/validate-openapi.js",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
@@ -23,7 +25,15 @@
     "migration:create": "typeorm-ts-node-commonjs migration:create",
     "migration:run": "npm run typeorm -- migration:run",
     "migration:revert": "npm run typeorm -- migration:revert",
-    "seed:rbac": "ts-node -r tsconfig-paths/register src/database/seeds/rbac.seed.ts"
+    "seed:admin": "ts-node -r tsconfig-paths/register src/database/seeds/create-admin.seed.ts",
+    "seed:enterprise": "ts-node -r tsconfig-paths/register src/database/seeds/enterprise.seed.ts",
+    "seed:bulk": "ts-node -r tsconfig-paths/register src/database/seeds/bulk.seed.ts",
+    "seed:linked-business": "ts-node -r tsconfig-paths/register src/database/seeds/linked-business.seed.ts",
+    "seed:real-data": "npm run seed:rbac && npm run seed:admin && npm run seed:enterprise && npm run seed:bulk && npm run seed:linked-business && npm run repair:variant-attributes",
+    "seed:rbac": "ts-node -r tsconfig-paths/register src/database/seeds/rbac.seed.ts",
+    "repair:variant-attributes": "ts-node -r tsconfig-paths/register src/database/scripts/repair-variant-attribute-links.ts",
+    "backup:db": "bash scripts/backup-database.sh",
+    "restore:db": "bash scripts/restore-database.sh"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

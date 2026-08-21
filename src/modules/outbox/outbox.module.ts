@@ -5,6 +5,10 @@ import { OutboxEvent } from './entities/outbox-event.entity';
 import { ProcessedEvent } from './entities/processed-event.entity';
 import { OutboxService } from './services/outbox.service';
 import { OutboxPublisherService } from './services/outbox-publisher.service';
+import {
+  isOpenApiGenerationMode,
+  isWorkerRuntimeRole,
+} from '../../shared/utils/runtime-flags';
 
 /**
  * Owns OutboxEvent/ProcessedEvent persistence, OutboxService (the writer
@@ -33,6 +37,10 @@ export class OutboxModule implements OnModuleInit {
   constructor(private readonly publisher: OutboxPublisherService) {}
 
   onModuleInit(): void {
+    if (isOpenApiGenerationMode() || !isWorkerRuntimeRole()) {
+      return;
+    }
+
     this.publisher.start();
   }
 }

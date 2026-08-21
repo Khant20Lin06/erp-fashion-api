@@ -1,13 +1,28 @@
+import { ApiProperty } from '@nestjs/swagger';
 import { PaymentAllocation } from '../entities/payment-allocation.entity';
 import { PaymentReferenceType } from '../entities/payment-reference-type.enum';
 
-export interface PaymentAllocationResponseDto {
-  id: string;
-  paymentId: string;
-  referenceType: PaymentReferenceType;
-  referenceId: string;
-  allocatedAmount: string;
-  createdAt: Date;
+export class PaymentAllocationResponseDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ format: 'uuid' })
+  paymentId!: string;
+
+  @ApiProperty({
+    enum: PaymentReferenceType,
+    example: PaymentReferenceType.Sale,
+  })
+  referenceType!: PaymentReferenceType;
+
+  @ApiProperty({ format: 'uuid' })
+  referenceId!: string;
+
+  @ApiProperty({ example: '250.00' })
+  allocatedAmount!: string;
+
+  @ApiProperty({ example: '2026-08-15T09:00:00.000Z' })
+  createdAt!: Date;
 }
 
 export function toPaymentAllocationResponseDto(

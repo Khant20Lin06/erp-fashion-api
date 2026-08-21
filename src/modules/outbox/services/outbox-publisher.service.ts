@@ -142,6 +142,12 @@ export class OutboxPublisherService implements OnModuleDestroy {
         topic,
         key: event.aggregateId,
         value: JSON.stringify(event.toEnvelope()),
+        headers: {
+          'x-event-id': event.eventId,
+          'x-event-type': event.eventType,
+          'x-correlation-id': event.correlationId ?? '',
+          'x-causation-id': event.causationId ?? '',
+        },
       });
       await this.markPublished(event.id);
     } catch (error) {

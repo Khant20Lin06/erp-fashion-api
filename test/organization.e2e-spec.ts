@@ -61,17 +61,30 @@ describeIfDb('Organization — Company/Branch/Warehouse (e2e)', () => {
   let plainUser: User;
 
   const password = 'correct-horse-battery-staple';
+  const authCookieByEmail = new Map<string, string>();
   const codePrefix = 'ORG-E2E';
 
   async function loginAndGetCookie(email: string): Promise<string> {
+    const cached = authCookieByEmail.get(email);
+    if (cached) {
+      return cached;
+    }
+
     const response = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
       .send({ email, password });
 
     const setCookie = response.headers['set-cookie'] as
       string[] | string | undefined;
-    const cookieHeader = Array.isArray(setCookie) ? setCookie[0] : setCookie;
-    return String(cookieHeader).split(';')[0];
+    const cookieSource = Array.isArray(setCookie)
+      ? setCookie.join('; ')
+      : String(setCookie);
+    const match = cookieSource.match(/fashion_erp_access_token=([^;]+)/);
+    const cookie = match ? `fashion_erp_access_token=${match[1]}` : '';
+    if (cookie) {
+      authCookieByEmail.set(email, cookie);
+    }
+    return cookie;
   }
 
   async function createCompany(

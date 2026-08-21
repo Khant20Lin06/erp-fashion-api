@@ -85,6 +85,14 @@ export class UsersService {
     return user;
   }
 
+  async findActiveById(id: string): Promise<User | null> {
+    const user = await this.userRepository.findOne({ where: { id } });
+    if (!user || user.status !== UserStatus.Active) {
+      return null;
+    }
+    return user;
+  }
+
   private normalizeEmail(email: string): string {
     return email.trim().toLowerCase();
   }

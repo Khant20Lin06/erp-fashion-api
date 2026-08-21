@@ -2,6 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import { Logger } from '@nestjs/common';
 import Redis from 'ioredis';
 import { RedisConfig } from '../../config/redis.config';
+import { isOpenApiGenerationMode } from '../../shared/utils/runtime-flags';
 
 export const REDIS_CLIENT = Symbol('REDIS_CLIENT');
 
@@ -34,17 +35,25 @@ const logger = new Logger('RedisClient');
  */
 export function createRedisClient(configService: ConfigService): Redis {
   const redisConfig = configService.get<RedisConfig>('redis')!;
+  const openApiGenerationMode = isOpenApiGenerationMode();
 
-  const client = new Redis({
-    host: redisConfig.host,
-    port: redisConfig.port,
-    password: redisConfig.password,
-    db: redisConfig.db,
-    lazyConnect: false,
-    maxRetriesPerRequest: 1,
+  const options = {
+    lazyConnect: openApiGenerationMode,
+    maxRetriesPerRequest: 1 as const,
     enableOfflineQueue: false,
+    connectTimeout: redisConfig.connectTimeoutMs,
     retryStrategy: (times: number) => Math.min(times * 200, 5000),
-  });
+  };
+
+  const client = redisConfig.url
+    ? new Redis(redisConfig.url, options)
+    : new Redis({
+        host: redisConfig.host,
+        port: redisConfig.port,
+        password: redisConfig.password,
+        db: redisConfig.db,
+        ...options,
+      });
 
   client.on('error', (error: Error) => {
     // A Redis outage must never crash the API process (locked spec: cache

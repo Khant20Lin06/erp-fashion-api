@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { JournalEntry } from '../accounting/entities/journal-entry.entity';
 import { JournalEntryLine } from '../accounting/entities/journal-entry-line.entity';
 import { Customer } from '../customer-supplier/entities/customer.entity';
 import { Supplier } from '../customer-supplier/entities/supplier.entity';
@@ -16,6 +17,7 @@ import { PurchaseReportsService } from './services/purchase-reports.service';
 import { PaymentReportsService } from './services/payment-reports.service';
 import { InventoryReportsService } from './services/inventory-reports.service';
 import { DashboardService } from './services/dashboard.service';
+import { AccountingAuditLogService } from './services/accounting-audit-log.service';
 import { BalanceSheetController } from './controllers/balance-sheet.controller';
 import { ProfitLossController } from './controllers/profit-loss.controller';
 import { ArApAgingController } from './controllers/ar-ap-aging.controller';
@@ -24,18 +26,24 @@ import { PurchaseReportsController } from './controllers/purchase-reports.contro
 import { PaymentReportsController } from './controllers/payment-reports.controller';
 import { InventoryReportsController } from './controllers/inventory-reports.controller';
 import { DashboardController } from './controllers/dashboard.controller';
+import { AccountingAuditLogController } from './controllers/accounting-audit-log.controller';
 import { AuthModule } from '../auth/auth.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { AccountingModule } from '../accounting/accounting.module';
 
 /**
  * Phase 22 — Reports/Dashboard. A single flat module registering every new
- * report entity's repository (JournalEntryLine/Customer/Supplier/Sale/
- * PurchaseOrder/Payment/WarehouseStock/StockMovement — all already
- * registered as entities elsewhere; TypeOrmModule.forFeature() here just
- * grants THIS module's services their own repository injection, mirroring
- * how every other cross-cutting module in this codebase re-declares
- * forFeature() for entities it reads rather than owns).
+ * report entity's repository (JournalEntry/JournalEntryLine/Customer/
+ * Supplier/Sale/PurchaseOrder/Payment/WarehouseStock/StockMovement — all
+ * already registered as entities elsewhere; TypeOrmModule.forFeature() here
+ * just grants THIS module's services their own repository injection,
+ * mirroring how every other cross-cutting module in this codebase
+ * re-declares forFeature() for entities it reads rather than owns).
+ *
+ * Phase 15 adds AccountingAuditLogController/Service — a read projection
+ * over JournalEntry/Payment/Sale/PurchaseOrder's existing createdBy/
+ * createdAt/postedBy/postedAt/status columns, not a new audit-logging
+ * table or write path (see AccountingAuditLogService's own docblock).
  *
  * Trial Balance and General Ledger already exist as Phase 17's own
  * GET /trial-balance and GET /general-ledger endpoints — deliberately NOT
@@ -51,6 +59,7 @@ import { AccountingModule } from '../accounting/accounting.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
+      JournalEntry,
       JournalEntryLine,
       Customer,
       Supplier,
@@ -73,6 +82,7 @@ import { AccountingModule } from '../accounting/accounting.module';
     PaymentReportsController,
     InventoryReportsController,
     DashboardController,
+    AccountingAuditLogController,
   ],
   providers: [
     BalanceSheetService,
@@ -83,6 +93,17 @@ import { AccountingModule } from '../accounting/accounting.module';
     PaymentReportsService,
     InventoryReportsService,
     DashboardService,
+    AccountingAuditLogService,
+  ],
+  // Exported so AiAssistantModule (Phase 19) can wrap these same real,
+  // already-correct report queries as AI tools rather than duplicating
+  // their query logic — see each *.tool.ts file's own docblock.
+  exports: [
+    BalanceSheetService,
+    ProfitLossService,
+    ArApAgingService,
+    SalesReportsService,
+    InventoryReportsService,
   ],
 })
 export class ReportsModule {}

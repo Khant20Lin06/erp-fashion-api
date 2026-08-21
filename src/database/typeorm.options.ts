@@ -2,6 +2,7 @@ import { DataSourceOptions } from 'typeorm';
 import { DatabaseConfig } from '../config/database.config';
 import { User } from '../modules/users/entities/user.entity';
 import { PasswordResetToken } from '../modules/users/entities/password-reset-token.entity';
+import { RefreshSession } from '../modules/auth/entities/refresh-session.entity';
 import { Role } from '../modules/rbac/entities/role.entity';
 import { Permission } from '../modules/rbac/entities/permission.entity';
 import { RolePermission } from '../modules/rbac/entities/role-permission.entity';
@@ -64,6 +65,38 @@ import { JournalEntryLine } from '../modules/accounting/entities/journal-entry-l
 import { OutboxEvent } from '../modules/outbox/entities/outbox-event.entity';
 import { ProcessedEvent } from '../modules/outbox/entities/processed-event.entity';
 import { Notification } from '../modules/notifications/entities/notification.entity';
+import { Department } from '../modules/hr/entities/department.entity';
+import { Designation } from '../modules/hr/entities/designation.entity';
+import { EmployeeAssignment } from '../modules/hr/entities/employee-assignment.entity';
+import { AttendanceRecord } from '../modules/hr/entities/attendance-record.entity';
+import { LeaveType } from '../modules/hr/entities/leave-type.entity';
+import { LeaveRequest } from '../modules/hr/entities/leave-request.entity';
+import { SettingDefinition } from '../modules/settings/entities/setting-definition.entity';
+import { SettingValue } from '../modules/settings/entities/setting-value.entity';
+import { Shift } from '../modules/payroll/entities/shift.entity';
+import { EmployeeShiftAssignment } from '../modules/payroll/entities/employee-shift-assignment.entity';
+import { EmployeeCompensation } from '../modules/payroll/entities/employee-compensation.entity';
+import { PayrollComponent } from '../modules/payroll/entities/payroll-component.entity';
+import { EmployeePayrollComponent } from '../modules/payroll/entities/employee-payroll-component.entity';
+import { PayrollConfiguration } from '../modules/payroll/entities/payroll-configuration.entity';
+import { PayrollPeriod } from '../modules/payroll/entities/payroll-period.entity';
+import { CompanyPayrollPeriodCounter } from '../modules/payroll/entities/company-payroll-period-counter.entity';
+import { PayrollRun } from '../modules/payroll/entities/payroll-run.entity';
+import { CompanyPayrollRunCounter } from '../modules/payroll/entities/company-payroll-run-counter.entity';
+import { PayrollRunEmployee } from '../modules/payroll/entities/payroll-run-employee.entity';
+import { PayrollRunEmployeeItem } from '../modules/payroll/entities/payroll-run-employee-item.entity';
+import { Promotion } from '../modules/promotions/entities/promotion.entity';
+import { LoyaltyProgram } from '../modules/loyalty/entities/loyalty-program.entity';
+import { LoyaltyPointTransaction } from '../modules/loyalty/entities/loyalty-point-transaction.entity';
+import { SaleReturn } from '../modules/sales-returns/entities/sale-return.entity';
+import { SaleReturnItem } from '../modules/sales-returns/entities/sale-return-item.entity';
+import { CompanySaleReturnCounter } from '../modules/sales-returns/entities/company-sale-return-counter.entity';
+import { WebhookSubscription } from '../modules/webhooks/entities/webhook-subscription.entity';
+import { WebhookDelivery } from '../modules/webhooks/entities/webhook-delivery.entity';
+import { AiConversation } from '../modules/ai-assistant/entities/ai-conversation.entity';
+import { AiMessage } from '../modules/ai-assistant/entities/ai-message.entity';
+import { AiKnowledgeDocument } from '../modules/ai-assistant/entities/ai-knowledge-document.entity';
+import { AiKnowledgeChunk } from '../modules/ai-assistant/entities/ai-knowledge-chunk.entity';
 
 /**
  * Entities are imported explicitly rather than discovered via a glob.
@@ -77,6 +110,7 @@ import { Notification } from '../modules/notifications/entities/notification.ent
 const entities = [
   User,
   PasswordResetToken,
+  RefreshSession,
   Role,
   Permission,
   RolePermission,
@@ -139,6 +173,38 @@ const entities = [
   OutboxEvent,
   ProcessedEvent,
   Notification,
+  Department,
+  Designation,
+  EmployeeAssignment,
+  AttendanceRecord,
+  LeaveType,
+  LeaveRequest,
+  SettingDefinition,
+  SettingValue,
+  Shift,
+  EmployeeShiftAssignment,
+  EmployeeCompensation,
+  PayrollComponent,
+  EmployeePayrollComponent,
+  PayrollConfiguration,
+  PayrollPeriod,
+  CompanyPayrollPeriodCounter,
+  PayrollRun,
+  CompanyPayrollRunCounter,
+  PayrollRunEmployee,
+  PayrollRunEmployeeItem,
+  Promotion,
+  LoyaltyProgram,
+  LoyaltyPointTransaction,
+  SaleReturn,
+  SaleReturnItem,
+  CompanySaleReturnCounter,
+  WebhookSubscription,
+  WebhookDelivery,
+  AiConversation,
+  AiMessage,
+  AiKnowledgeDocument,
+  AiKnowledgeChunk,
 ];
 
 export function buildDataSourceOptions(
@@ -146,6 +212,7 @@ export function buildDataSourceOptions(
 ): DataSourceOptions {
   return {
     type: 'mysql',
+    url: config.url,
     host: config.host,
     port: config.port,
     username: config.username,
@@ -177,6 +244,9 @@ export function buildDataSourceOptions(
     synchronize: false,
     logging: config.logging,
     poolSize: config.poolSize,
+    extra: {
+      connectTimeout: config.connectTimeoutMs ?? 10000,
+    },
     entities,
     migrations: [__dirname + '/migrations/*{.ts,.js}'],
     migrationsTableName: 'migrations',

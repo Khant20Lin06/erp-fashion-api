@@ -88,16 +88,29 @@ describeIfDb('Outbox / Events (Phase 18) (e2e)', () => {
   let superAdminUser: User;
 
   const password = 'correct-horse-battery-staple';
+  const authCookieByEmail = new Map<string, string>();
   const prefix = 'OBX-E2E';
 
   async function loginAndGetCookie(email: string): Promise<string> {
+    const cached = authCookieByEmail.get(email);
+    if (cached) {
+      return cached;
+    }
+
     const response = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
       .send({ email, password });
     const setCookie = response.headers['set-cookie'] as
       string[] | string | undefined;
-    const cookieHeader = Array.isArray(setCookie) ? setCookie[0] : setCookie;
-    return String(cookieHeader).split(';')[0];
+    const cookieSource = Array.isArray(setCookie)
+      ? setCookie.join('; ')
+      : String(setCookie);
+    const match = cookieSource.match(/fashion_erp_access_token=([^;]+)/);
+    const cookie = match ? `fashion_erp_access_token=${match[1]}` : '';
+    if (cookie) {
+      authCookieByEmail.set(email, cookie);
+    }
+    return cookie;
   }
 
   function rand(): string {
@@ -913,11 +926,16 @@ describeIfDb('Outbox / Events (Phase 18) (e2e)', () => {
       const beforeRows = await getOutboxRowsForCompany(company.id);
       expect(beforeRows[0].status).toBe('PENDING');
 
-      await outboxPublisher.tick();
-
-      // Poll briefly for the async DB update + Kafka delivery to settle.
+      // MySQL stores these timestamps at second precision. A freshly
+      // committed outbox row created near the end of a second can round its
+      // available_at up to the next whole second, so a single immediate
+      // tick() can legitimately see zero eligible rows even though the row
+      // is otherwise healthy. Keep driving the real publisher while polling
+      // so the test proves eventual publication rather than depending on a
+      // sub-second timing accident.
       let published = false;
       for (let attempt = 0; attempt < 20; attempt += 1) {
+        await outboxPublisher.tick();
         const rows = await getOutboxRowsForCompany(company.id);
         if (rows[0].status === 'PUBLISHED') {
           published = true;

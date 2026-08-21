@@ -15,6 +15,7 @@ import { SupplierStatus } from '../../customer-supplier/entities/supplier-status
 import { PaymentMethodsService } from './payment-methods.service';
 import { SalesService } from '../../sales/services/sales.service';
 import { PurchaseOrdersService } from '../../purchase/services/purchase-orders.service';
+import { SaleReturnsService } from '../../sales-returns/services/sale-returns.service';
 import { AccountingPostingService } from '../../accounting/services/accounting-posting.service';
 import { ErrorCode } from '../../../core/errors/error-codes';
 import { CreatePaymentDto } from '../dto/create-payment.dto';
@@ -47,6 +48,7 @@ describe('PaymentsService', () => {
   let purchaseOrdersService: jest.Mocked<
     Pick<PurchaseOrdersService, 'applyPayment'>
   >;
+  let saleReturnsService: jest.Mocked<Pick<SaleReturnsService, 'applyRefund'>>;
   let accountingPostingService: jest.Mocked<
     Pick<AccountingPostingService, 'postPayment'>
   >;
@@ -160,6 +162,9 @@ describe('PaymentsService', () => {
     purchaseOrdersService = {
       applyPayment: jest.fn().mockResolvedValue(undefined),
     };
+    saleReturnsService = {
+      applyRefund: jest.fn().mockResolvedValue(undefined),
+    };
     accountingPostingService = {
       postPayment: jest.fn().mockResolvedValue(undefined),
     };
@@ -180,6 +185,7 @@ describe('PaymentsService', () => {
       paymentMethodsService as unknown as PaymentMethodsService,
       salesService as unknown as SalesService,
       purchaseOrdersService as unknown as PurchaseOrdersService,
+      saleReturnsService as unknown as SaleReturnsService,
       accountingPostingService as unknown as AccountingPostingService,
       outboxService,
       requestContextService as unknown as RequestContextService,

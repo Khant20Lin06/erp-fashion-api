@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Job } from 'bullmq';
 import Redis from 'ioredis';
+import { ConfigService } from '@nestjs/config';
 import { BaseQueueWorker } from '../../queue/base-queue-worker';
 import { BULLMQ_CONNECTION } from '../../queue/bullmq-connection.provider';
 import { QueueNames } from '../../queue/queue-names';
@@ -11,6 +12,8 @@ import {
   NotificationProvider,
 } from '../providers/notification-provider.interface';
 import { NotificationJobData } from './notification-job.interface';
+import { QueueConfig } from '../../../config/queue.config';
+import { MetricsRegistryService } from '../../../observability/metrics/metrics-registry.service';
 
 /**
  * Phase 21 — the sole consumer of the `notifications` BullMQ queue.
@@ -38,8 +41,16 @@ export class NotificationWorker extends BaseQueueWorker<NotificationJobData> {
     private readonly notificationsService: NotificationsService,
     @Inject(NOTIFICATION_PROVIDERS)
     private readonly providers: NotificationProvider[],
+    configService?: ConfigService,
+    metrics?: MetricsRegistryService,
   ) {
-    super(QueueNames.NOTIFICATIONS, connection, 3);
+    const queueConfig = configService?.get<QueueConfig>('queue');
+    super(
+      QueueNames.NOTIFICATIONS,
+      connection,
+      queueConfig?.notificationWorkerConcurrency ?? 3,
+      metrics,
+    );
   }
 
   protected async process(job: Job<NotificationJobData>): Promise<void> {

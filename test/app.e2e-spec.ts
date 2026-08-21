@@ -43,7 +43,7 @@ describe('Application Foundation (e2e)', () => {
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
       status: 'ok',
-      service: 'fashion-erp-backend',
+      service: 'Fashion ERP Backend',
     });
   });
 

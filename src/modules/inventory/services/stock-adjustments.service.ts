@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 import { StockAdjustment } from '../entities/stock-adjustment.entity';
 import { CompanyStockAdjustmentCounter } from '../entities/company-stock-adjustment-counter.entity';
 import { WarehouseStock } from '../entities/warehouse-stock.entity';
@@ -25,9 +25,22 @@ import {
   DEFAULT_LIMIT,
   DEFAULT_PAGE,
 } from '../../../shared/dto/pagination.dto';
+import {
+  StockAdjustmentResponseDto,
+  toStockAdjustmentResponseDto,
+} from '../dto/stock-adjustment-response.dto';
+import { Warehouse } from '../../organization/entities/warehouse.entity';
+import { ProductVariant } from '../../products/entities/product-variant.entity';
+import { ProductVariantAttribute } from '../../products/entities/product-variant-attribute.entity';
+import { User } from '../../users/entities/user.entity';
 
 export interface PaginatedStockAdjustments {
   data: StockAdjustment[];
+  meta: { page: number; limit: number; total: number };
+}
+
+export interface PaginatedStockAdjustmentViews {
+  data: StockAdjustmentResponseDto[];
   meta: { page: number; limit: number; total: number };
 }
 
@@ -45,10 +58,31 @@ export class StockAdjustmentsService {
   constructor(
     @InjectRepository(StockAdjustment)
     private readonly stockAdjustmentRepository: Repository<StockAdjustment>,
+    @InjectRepository(Warehouse)
+    private readonly warehouseRepository: Repository<Warehouse>,
+    @InjectRepository(ProductVariant)
+    private readonly productVariantRepository: Repository<ProductVariant>,
+    @InjectRepository(ProductVariantAttribute)
+    private readonly productVariantAttributeRepository: Repository<ProductVariantAttribute>,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+    @InjectRepository(StockMovement)
+    private readonly stockMovementRepository: Repository<StockMovement>,
     private readonly transactionService: TransactionService,
     private readonly warehousesService: WarehousesService,
     private readonly productVariantsService: ProductVariantsService,
   ) {}
+
+  async findAllView(
+    companyId: string,
+    query: ListStockAdjustmentsDto,
+  ): Promise<PaginatedStockAdjustmentViews> {
+    const result = await this.findAll(companyId, query);
+    return {
+      data: await this.enrichAdjustments(result.data),
+      meta: result.meta,
+    };
+  }
 
   async findAll(
     companyId: string,
@@ -94,6 +128,18 @@ export class StockAdjustmentsService {
       throw new AppException(ErrorCode.NotFound, 'Stock adjustment not found');
     }
     return adjustment;
+  }
+
+  async findViewByIdInCompany(
+    id: string,
+    companyId: string,
+  ): Promise<StockAdjustmentResponseDto> {
+    const adjustment = await this.findByIdInCompany(id, companyId);
+    const [view] = await this.enrichAdjustments([adjustment]);
+    if (!view) {
+      throw new AppException(ErrorCode.NotFound, 'Stock adjustment not found');
+    }
+    return view;
   }
 
   private async generateAdjustmentNumber(
@@ -225,6 +271,112 @@ export class StockAdjustmentsService {
       await manager.save(StockMovement, movement);
 
       return savedAdjustment;
+    });
+  }
+
+  async createView(
+    companyId: string,
+    userId: string,
+    dto: CreateStockAdjustmentDto,
+  ): Promise<StockAdjustmentResponseDto> {
+    const adjustment = await this.create(companyId, userId, dto);
+    const [view] = await this.enrichAdjustments([adjustment]);
+    if (!view) {
+      throw new AppException(
+        ErrorCode.InternalError,
+        'Failed to build stock adjustment response',
+      );
+    }
+    return view;
+  }
+
+  private async enrichAdjustments(
+    adjustments: StockAdjustment[],
+  ): Promise<StockAdjustmentResponseDto[]> {
+    if (adjustments.length === 0) {
+      return [];
+    }
+
+    const unique = (values: string[]) => [...new Set(values)];
+
+    const warehouseIds = unique(adjustments.map((adjustment) => adjustment.warehouseId));
+    const productVariantIds = unique(
+      adjustments.map((adjustment) => adjustment.productVariantId),
+    );
+    const userIds = unique(
+      adjustments
+        .map((adjustment) => adjustment.createdBy)
+        .filter((value): value is string => Boolean(value)),
+    );
+    const adjustmentIds = adjustments.map((adjustment) => adjustment.id);
+
+    const [
+      warehouses,
+      variants,
+      variantAttributes,
+      users,
+      movements,
+    ] = await Promise.all([
+      this.warehouseRepository.find({ where: { id: In(warehouseIds) } }),
+      this.productVariantRepository.find({
+        where: { id: In(productVariantIds) },
+        relations: { product: true },
+      }),
+      this.productVariantAttributeRepository.find({
+        where: { variantId: In(productVariantIds) },
+        relations: { option: true },
+      }),
+      userIds.length > 0
+        ? this.userRepository.find({ where: { id: In(userIds) } })
+        : Promise.resolve([]),
+      this.stockMovementRepository.find({
+        where: {
+          referenceType: StockMovementReferenceType.StockAdjustment,
+          referenceId: In(adjustmentIds),
+        },
+      }),
+    ]);
+
+    const warehouseNames = new Map(
+      warehouses.map((warehouse) => [warehouse.id, warehouse.name]),
+    );
+    const variantsById = new Map(
+      variants.map((variant) => [variant.id, variant]),
+    );
+    const usersById = new Map(users.map((user) => [user.id, user]));
+    const movementsByReferenceId = new Map(
+      movements.map((movement) => [movement.referenceId, movement]),
+    );
+
+    const variantLabels = new Map<string, string>();
+    for (const variantId of productVariantIds) {
+      const label = variantAttributes
+        .filter((attribute) => attribute.variantId === variantId)
+        .sort((a, b) => a.kind.localeCompare(b.kind))
+        .map((attribute) => attribute.option.value.trim())
+        .filter(Boolean)
+        .join(' / ');
+
+      if (label) {
+        variantLabels.set(variantId, label);
+      }
+    }
+
+    return adjustments.map((adjustment) => {
+      const variant = variantsById.get(adjustment.productVariantId);
+      const movement = movementsByReferenceId.get(adjustment.id);
+      const createdByUser = adjustment.createdBy
+        ? usersById.get(adjustment.createdBy)
+        : undefined;
+
+      return toStockAdjustmentResponseDto(adjustment, {
+        warehouseName: warehouseNames.get(adjustment.warehouseId) ?? null,
+        productName: variant?.product?.name ?? null,
+        sku: variant?.sku ?? null,
+        variantLabel: variantLabels.get(adjustment.productVariantId) ?? null,
+        quantityAfter: movement?.quantityAfter ?? null,
+        createdByName: createdByUser?.displayName ?? null,
+      });
     });
   }
 }

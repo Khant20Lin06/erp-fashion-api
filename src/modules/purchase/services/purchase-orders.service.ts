@@ -107,6 +107,8 @@ export class PurchaseOrdersService {
 
     const qb = this.purchaseOrderRepository
       .createQueryBuilder('purchaseOrder')
+      .leftJoinAndSelect('purchaseOrder.items', 'items')
+      .loadRelationCountAndMap('purchaseOrder.itemCount', 'purchaseOrder.items')
       .where('purchaseOrder.companyId = :companyId', { companyId });
 
     if (query.branchId) {
@@ -138,7 +140,8 @@ export class PurchaseOrdersService {
       });
     }
 
-    qb.orderBy(`purchaseOrder.${sortField}`, query.order ?? 'DESC')
+    qb.distinct(true)
+      .orderBy(`purchaseOrder.${sortField}`, query.order ?? 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
 

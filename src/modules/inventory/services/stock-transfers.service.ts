@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 import { StockTransfer } from '../entities/stock-transfer.entity';
 import { StockTransferItem } from '../entities/stock-transfer-item.entity';
 import { CompanyStockTransferCounter } from '../entities/company-stock-transfer-counter.entity';
@@ -25,9 +25,22 @@ import {
   DEFAULT_LIMIT,
   DEFAULT_PAGE,
 } from '../../../shared/dto/pagination.dto';
+import {
+  StockTransferResponseDto,
+  toStockTransferItemResponseDto,
+  toStockTransferResponseDto,
+} from '../dto/stock-transfer-response.dto';
+import { Warehouse } from '../../organization/entities/warehouse.entity';
+import { User } from '../../users/entities/user.entity';
+import { ProductVariantAttribute } from '../../products/entities/product-variant-attribute.entity';
 
 export interface PaginatedStockTransfers {
   data: StockTransfer[];
+  meta: { page: number; limit: number; total: number };
+}
+
+export interface PaginatedStockTransferViews {
+  data: StockTransferResponseDto[];
   meta: { page: number; limit: number; total: number };
 }
 
@@ -45,9 +58,30 @@ export class StockTransfersService {
   constructor(
     @InjectRepository(StockTransfer)
     private readonly stockTransferRepository: Repository<StockTransfer>,
+    @InjectRepository(StockTransferItem)
+    private readonly stockTransferItemRepository: Repository<StockTransferItem>,
+    @InjectRepository(Warehouse)
+    private readonly warehouseRepository: Repository<Warehouse>,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+    @InjectRepository(ProductVariant)
+    private readonly productVariantRepository: Repository<ProductVariant>,
+    @InjectRepository(ProductVariantAttribute)
+    private readonly productVariantAttributeRepository: Repository<ProductVariantAttribute>,
     private readonly transactionService: TransactionService,
     private readonly warehousesService: WarehousesService,
   ) {}
+
+  async findAllView(
+    companyId: string,
+    query: ListStockTransfersDto,
+  ): Promise<PaginatedStockTransferViews> {
+    const result = await this.findAll(companyId, query);
+    return {
+      data: await this.enrichTransfers(result.data),
+      meta: result.meta,
+    };
+  }
 
   async findAll(
     companyId: string,
@@ -91,6 +125,18 @@ export class StockTransfersService {
       throw new AppException(ErrorCode.NotFound, 'Stock transfer not found');
     }
     return transfer;
+  }
+
+  async findViewByIdInCompany(
+    id: string,
+    companyId: string,
+  ): Promise<StockTransferResponseDto> {
+    const transfer = await this.findByIdInCompany(id, companyId);
+    const [view] = await this.enrichTransfers([transfer]);
+    if (!view) {
+      throw new AppException(ErrorCode.NotFound, 'Stock transfer not found');
+    }
+    return view;
   }
 
   private async generateTransferNumber(
@@ -303,6 +349,129 @@ export class StockTransfersService {
         where: { stockTransferId: savedTransfer.id },
       });
       return savedTransfer;
+    });
+  }
+
+  async createView(
+    companyId: string,
+    userId: string,
+    dto: CreateStockTransferDto,
+  ): Promise<StockTransferResponseDto> {
+    const transfer = await this.create(companyId, userId, dto);
+    const [view] = await this.enrichTransfers([transfer]);
+    if (!view) {
+      throw new AppException(
+        ErrorCode.InternalError,
+        'Failed to build stock transfer response',
+      );
+    }
+    return view;
+  }
+
+  private async enrichTransfers(
+    transfers: StockTransfer[],
+  ): Promise<StockTransferResponseDto[]> {
+    if (transfers.length === 0) {
+      return [];
+    }
+
+    const unique = (values: string[]) => [...new Set(values)];
+    const transferIds = transfers.map((transfer) => transfer.id);
+    const warehouseIds = unique(
+      transfers.flatMap((transfer) => [
+        transfer.sourceWarehouseId,
+        transfer.destinationWarehouseId,
+      ]),
+    );
+    const userIds = unique(
+      transfers
+        .map((transfer) => transfer.createdBy)
+        .filter((value): value is string => Boolean(value)),
+    );
+
+    const hydratedItems = transfers.some((transfer) => !transfer.items)
+      ? await this.stockTransferItemRepository.find({
+          where: { stockTransferId: In(transferIds) },
+        })
+      : [];
+
+    const allItems = transfers.flatMap((transfer) => transfer.items ?? []).concat(
+      hydratedItems,
+    );
+    const productVariantIds = unique(
+      allItems.map((item) => item.productVariantId),
+    );
+
+    const [warehouses, users, variants, variantAttributes] = await Promise.all([
+      this.warehouseRepository.find({ where: { id: In(warehouseIds) } }),
+      userIds.length > 0
+        ? this.userRepository.find({ where: { id: In(userIds) } })
+        : Promise.resolve([]),
+      productVariantIds.length > 0
+        ? this.productVariantRepository.find({
+            where: { id: In(productVariantIds) },
+            relations: { product: true },
+          })
+        : Promise.resolve([]),
+      productVariantIds.length > 0
+        ? this.productVariantAttributeRepository.find({
+            where: { variantId: In(productVariantIds) },
+            relations: { option: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const itemsByTransferId = new Map<string, StockTransferItem[]>();
+    for (const item of allItems) {
+      const bucket = itemsByTransferId.get(item.stockTransferId) ?? [];
+      if (!bucket.some((existing) => existing.id === item.id)) {
+        bucket.push(item);
+      }
+      itemsByTransferId.set(item.stockTransferId, bucket);
+    }
+
+    const warehouseNames = new Map(
+      warehouses.map((warehouse) => [warehouse.id, warehouse.name]),
+    );
+    const usersById = new Map(users.map((user) => [user.id, user]));
+    const variantsById = new Map(
+      variants.map((variant) => [variant.id, variant]),
+    );
+
+    const variantLabels = new Map<string, string>();
+    for (const variantId of productVariantIds) {
+      const label = variantAttributes
+        .filter((attribute) => attribute.variantId === variantId)
+        .sort((a, b) => a.kind.localeCompare(b.kind))
+        .map((attribute) => attribute.option.value.trim())
+        .filter(Boolean)
+        .join(' / ');
+
+      if (label) {
+        variantLabels.set(variantId, label);
+      }
+    }
+
+    return transfers.map((transfer) => {
+      const transferItems = (itemsByTransferId.get(transfer.id) ?? []).map(
+        (item) => {
+          const variant = variantsById.get(item.productVariantId);
+          return toStockTransferItemResponseDto(item, {
+            productName: variant?.product?.name ?? null,
+            sku: variant?.sku ?? null,
+            variantLabel: variantLabels.get(item.productVariantId) ?? null,
+          });
+        },
+      );
+
+      return toStockTransferResponseDto(transfer, {
+        sourceWarehouseName:
+          warehouseNames.get(transfer.sourceWarehouseId) ?? null,
+        destinationWarehouseName:
+          warehouseNames.get(transfer.destinationWarehouseId) ?? null,
+        createdByName: usersById.get(transfer.createdBy)?.displayName ?? null,
+        items: transferItems,
+      });
     });
   }
 }

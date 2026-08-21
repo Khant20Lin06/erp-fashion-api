@@ -12,12 +12,22 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import {
+  ApiBadRequestResponse,
+  ApiBearerAuth,
+  ApiForbiddenResponse,
+  ApiNoContentResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+  ApiUnauthorizedResponse,
+} from '@nestjs/swagger';
 import { ProductsService } from '../services/products.service';
 import { CreateProductDto } from '../dto/create-product.dto';
 import { UpdateProductDto } from '../dto/update-product.dto';
 import { ListProductsDto } from '../dto/list-products.dto';
 import {
+  ProductListResponseDto,
   ProductResponseDto,
   toProductResponseDto,
 } from '../dto/product-response.dto';
@@ -28,6 +38,7 @@ import { DataScopeService } from '../../rbac/services/data-scope.service';
 import { CurrentUser } from '../../../shared/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../auth/types/authenticated-user';
 import { resolveRequestCompanyId } from '../../master-data/utils/resolve-request-company-id';
+import { ErrorResponseDto } from '../../../common/swagger/dto/error-response.dto';
 
 const RESOURCE = 'products';
 
@@ -42,6 +53,28 @@ export class ProductsController {
 
   @Get()
   @RequirePermission('products.read')
+  @ApiBearerAuth('bearerAuth')
+  @ApiOperation({
+    summary: 'List products visible within the authenticated user scope',
+  })
+  @ApiOkResponse({
+    type: ProductListResponseDto,
+    description:
+      'Paginated product list. companyId acts only as a filter; DataScope remains authoritative.',
+  })
+  @ApiBadRequestResponse({
+    type: ErrorResponseDto,
+    description: 'Validation failed for query parameters.',
+  })
+  @ApiUnauthorizedResponse({
+    type: ErrorResponseDto,
+    description: 'Missing, invalid, expired, or revoked JWT session.',
+  })
+  @ApiForbiddenResponse({
+    type: ErrorResponseDto,
+    description:
+      'The authenticated user lacks the required permission or company scope.',
+  })
   async findAll(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: ListProductsDto,
@@ -61,6 +94,25 @@ export class ProductsController {
 
   @Get(':id')
   @RequirePermission('products.read')
+  @ApiBearerAuth('bearerAuth')
+  @ApiOperation({ summary: 'Get a single product by id within scope' })
+  @ApiOkResponse({
+    type: ProductResponseDto,
+    description: 'Product detail if it is visible in the authenticated scope.',
+  })
+  @ApiBadRequestResponse({
+    type: ErrorResponseDto,
+    description: 'Validation failed for path/query parameters.',
+  })
+  @ApiUnauthorizedResponse({
+    type: ErrorResponseDto,
+    description: 'Missing, invalid, expired, or revoked JWT session.',
+  })
+  @ApiForbiddenResponse({
+    type: ErrorResponseDto,
+    description:
+      'The authenticated user lacks the required permission or company scope.',
+  })
   async findOne(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
@@ -78,6 +130,26 @@ export class ProductsController {
 
   @Post()
   @RequirePermission('products.create')
+  @ApiBearerAuth('bearerAuth')
+  @ApiOperation({ summary: 'Create a product and its initial variant' })
+  @ApiOkResponse({
+    type: ProductResponseDto,
+    description:
+      'Created product. companyId is validated against DataScope before persistence.',
+  })
+  @ApiBadRequestResponse({
+    type: ErrorResponseDto,
+    description: 'Validation failed for the request body.',
+  })
+  @ApiUnauthorizedResponse({
+    type: ErrorResponseDto,
+    description: 'Missing, invalid, expired, or revoked JWT session.',
+  })
+  @ApiForbiddenResponse({
+    type: ErrorResponseDto,
+    description:
+      'The authenticated user lacks the required permission or company scope.',
+  })
   async create(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateProductDto,
@@ -94,6 +166,15 @@ export class ProductsController {
 
   @Patch(':id')
   @RequirePermission('products.update')
+  @ApiBearerAuth('bearerAuth')
+  @ApiOperation({ summary: 'Update a product within scope' })
+  @ApiOkResponse({ type: ProductResponseDto })
+  @ApiBadRequestResponse({
+    type: ErrorResponseDto,
+    description: 'Validation failed for path/query/body parameters.',
+  })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiForbiddenResponse({ type: ErrorResponseDto })
   async update(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
@@ -113,6 +194,12 @@ export class ProductsController {
   @Post(':id/activate')
   @HttpCode(HttpStatus.OK)
   @RequirePermission('products.update')
+  @ApiBearerAuth('bearerAuth')
+  @ApiOperation({ summary: 'Activate a product within scope' })
+  @ApiOkResponse({ type: ProductResponseDto })
+  @ApiBadRequestResponse({ type: ErrorResponseDto })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiForbiddenResponse({ type: ErrorResponseDto })
   async activate(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
@@ -131,6 +218,12 @@ export class ProductsController {
   @Post(':id/deactivate')
   @HttpCode(HttpStatus.OK)
   @RequirePermission('products.update')
+  @ApiBearerAuth('bearerAuth')
+  @ApiOperation({ summary: 'Deactivate a product within scope' })
+  @ApiOkResponse({ type: ProductResponseDto })
+  @ApiBadRequestResponse({ type: ErrorResponseDto })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiForbiddenResponse({ type: ErrorResponseDto })
   async deactivate(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
@@ -149,6 +242,14 @@ export class ProductsController {
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @RequirePermission('products.delete')
+  @ApiBearerAuth('bearerAuth')
+  @ApiOperation({ summary: 'Soft-delete a product within scope' })
+  @ApiNoContentResponse({
+    description: 'The product was deleted successfully.',
+  })
+  @ApiBadRequestResponse({ type: ErrorResponseDto })
+  @ApiUnauthorizedResponse({ type: ErrorResponseDto })
+  @ApiForbiddenResponse({ type: ErrorResponseDto })
   async remove(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,

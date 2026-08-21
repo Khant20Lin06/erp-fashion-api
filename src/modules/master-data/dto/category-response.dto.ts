@@ -10,11 +10,14 @@ export interface CategoryResponseDto {
   parentId: string | null;
   status: CategoryStatus;
   sortOrder: number;
+  productCount: number;
   createdAt: Date;
   updatedAt: Date;
 }
 
-export function toCategoryResponseDto(category: Category): CategoryResponseDto {
+export function toCategoryResponseDto(
+  category: Category & { productCount?: number },
+): CategoryResponseDto {
   return {
     id: category.id,
     companyId: category.companyId,
@@ -24,6 +27,7 @@ export function toCategoryResponseDto(category: Category): CategoryResponseDto {
     parentId: category.parentId,
     status: category.status,
     sortOrder: category.sortOrder,
+    productCount: category.productCount ?? 0,
     createdAt: category.createdAt,
     updatedAt: category.updatedAt,
   };

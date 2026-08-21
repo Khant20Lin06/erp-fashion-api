@@ -354,20 +354,16 @@ export class ProductsService {
     return this.productRepository.save(product);
   }
 
-  /** Soft delete only, blocked while any active ProductVariant exists (no orphaning). */
+  /** Soft delete the product together with its variants to keep Product Master cleanup usable. */
   async remove(id: string, companyId: string): Promise<void> {
     const product = await this.findByIdInCompany(id, companyId);
-
-    const activeVariantCount = await this.variantRepository.count({
-      where: { productId: id, status: ProductVariantStatus.Active },
+    const variants = await this.variantRepository.find({
+      where: { productId: id, companyId },
     });
-    if (activeVariantCount > 0) {
-      throw new AppException(
-        ErrorCode.Conflict,
-        'Product has active variants and cannot be deleted',
-      );
-    }
 
+    if (variants.length > 0) {
+      await this.variantRepository.softRemove(variants);
+    }
     await this.productRepository.softRemove(product);
   }
 }
