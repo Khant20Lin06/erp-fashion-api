@@ -1,18 +1,7 @@
 import { Controller, Get } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
-import { ConfigService } from '@nestjs/config';
-import { AppConfig } from '../config/app.config';
-import { KafkaProducerService } from '../modules/kafka/kafka-producer.service';
-import { CacheService } from '../modules/redis/cache.service';
-
-interface HealthResponse {
-  status: 'ok';
-  service: string;
-  environment: string;
-  timestamp: string;
-  kafka: 'up' | 'down';
-  redis: 'up' | 'down';
-}
+import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { HealthResponseDto } from './dto/health-response.dto';
+import { HealthService, ReadinessResponse } from './health.service';
 
 /**
  * The Kafka connectivity check (Phase 18 addition) is purely informational
@@ -34,25 +23,47 @@ interface HealthResponse {
 @ApiTags('Health')
 @Controller('health')
 export class HealthController {
-  constructor(
-    private readonly configService: ConfigService,
-    private readonly kafkaProducerService: KafkaProducerService,
-    private readonly cacheService: CacheService,
-  ) {}
+  constructor(private readonly healthService: HealthService) {}
 
   @Get()
-  async check(): Promise<HealthResponse> {
-    const appConfig = this.configService.get<AppConfig>('app')!;
-    const kafkaConnected = await this.kafkaProducerService.isConnected();
-    const redisConnected = await this.cacheService.isConnected();
+  @ApiOperation({
+    summary: 'Return safe liveness and infrastructure reachability information',
+  })
+  @ApiOkResponse({
+    type: HealthResponseDto,
+    description:
+      'Safe health payload. Reports Redis and Kafka reachability without exposing credentials or internal connection details.',
+  })
+  async check(): Promise<HealthResponseDto> {
+    return this.healthService.getOverview();
+  }
 
-    return {
-      status: 'ok',
-      service: 'fashion-erp-backend',
-      environment: appConfig.nodeEnv,
-      timestamp: new Date().toISOString(),
-      kafka: kafkaConnected ? 'up' : 'down',
-      redis: redisConnected ? 'up' : 'down',
-    };
+  @Get('live')
+  @ApiOperation({
+    summary: 'Liveness probe for container/process health',
+  })
+  @ApiOkResponse({
+    description: 'Returns ok when the NestJS process is alive.',
+  })
+  live(): {
+    status: 'ok';
+    service: string;
+    environment: string;
+    role: string;
+    timestamp: string;
+  } {
+    return this.healthService.getLiveness();
+  }
+
+  @Get('ready')
+  @ApiOperation({
+    summary: 'Readiness probe for dependency-aware traffic admission',
+  })
+  @ApiOkResponse({
+    description:
+      'Returns ready only when the current runtime role has the dependencies it needs to operate safely.',
+  })
+  ready(): Promise<ReadinessResponse> {
+    return this.healthService.getReadinessOrThrow();
   }
 }

@@ -1,45 +1,57 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConfigService } from '@nestjs/config';
 import { HealthController } from './health.controller';
-import { AppConfig } from '../config/app.config';
-import { KafkaProducerService } from '../modules/kafka/kafka-producer.service';
-import { CacheService } from '../modules/redis/cache.service';
+import { HealthService } from './health.service';
 
 describe('HealthController', () => {
   let controller: HealthController;
-  let kafkaProducerService: { isConnected: jest.Mock };
-  let cacheService: { isConnected: jest.Mock };
-
-  const mockAppConfig: AppConfig = {
-    nodeEnv: 'test' as AppConfig['nodeEnv'],
-    port: 4000,
-    apiPrefix: 'api',
-    apiVersion: '1',
-    appName: 'Fashion ERP Backend',
-    corsOrigins: [],
-    logLevel: 'info',
+  let healthService: {
+    getOverview: jest.Mock;
+    getLiveness: jest.Mock;
+    getReadinessOrThrow: jest.Mock;
   };
 
   beforeEach(async () => {
-    kafkaProducerService = { isConnected: jest.fn().mockResolvedValue(true) };
-    cacheService = { isConnected: jest.fn().mockResolvedValue(true) };
+    healthService = {
+      getOverview: jest.fn().mockResolvedValue({
+        status: 'ok',
+        service: 'Fashion ERP Backend',
+        environment: 'test',
+        role: 'all',
+        timestamp: '2026-08-15T09:00:00.000Z',
+        ready: true,
+        mysql: 'up',
+        redis: 'up',
+        kafka: 'up',
+        bullmq: 'up',
+      }),
+      getLiveness: jest.fn().mockReturnValue({
+        status: 'ok',
+        service: 'Fashion ERP Backend',
+        environment: 'test',
+        role: 'all',
+        timestamp: '2026-08-15T09:00:00.000Z',
+      }),
+      getReadinessOrThrow: jest.fn().mockResolvedValue({
+        status: 'ready',
+        service: 'Fashion ERP Backend',
+        environment: 'test',
+        role: 'all',
+        timestamp: '2026-08-15T09:00:00.000Z',
+        checks: {
+          mysql: { status: 'up', required: true },
+          redis: { status: 'up', required: true },
+          kafka: { status: 'up', required: true },
+          bullmq: { status: 'up', required: true },
+        },
+      }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [HealthController],
       providers: [
         {
-          provide: ConfigService,
-          useValue: {
-            get: jest.fn().mockReturnValue(mockAppConfig),
-          },
-        },
-        {
-          provide: KafkaProducerService,
-          useValue: kafkaProducerService,
-        },
-        {
-          provide: CacheService,
-          useValue: cacheService,
+          provide: HealthService,
+          useValue: healthService,
         },
       ],
     }).compile();
@@ -51,38 +63,25 @@ describe('HealthController', () => {
     expect(controller).toBeDefined();
   });
 
-  it('should return ok status with service and environment', async () => {
+  it('delegates overview requests to HealthService', async () => {
     const result = await controller.check();
 
     expect(result.status).toBe('ok');
-    expect(result.service).toBe('fashion-erp-backend');
-    expect(result.environment).toBe('test');
-    expect(result.timestamp).toBeDefined();
+    expect(result.mysql).toBe('up');
+    expect(healthService.getOverview).toHaveBeenCalledTimes(1);
   });
 
-  it('should report kafka connectivity without affecting overall status', async () => {
-    kafkaProducerService.isConnected.mockResolvedValue(false);
-
-    const result = await controller.check();
+  it('delegates liveness requests to HealthService', () => {
+    const result = controller.live();
 
     expect(result.status).toBe('ok');
-    expect(result.kafka).toBe('down');
+    expect(healthService.getLiveness).toHaveBeenCalledTimes(1);
   });
 
-  it('should report redis connectivity without affecting overall status', async () => {
-    cacheService.isConnected.mockResolvedValue(false);
+  it('delegates readiness requests to HealthService', async () => {
+    const result = await controller.ready();
 
-    const result = await controller.check();
-
-    expect(result.status).toBe('ok');
-    expect(result.redis).toBe('down');
-  });
-
-  it('should not expose sensitive configuration', async () => {
-    const result = await controller.check();
-    const serialized = JSON.stringify(result);
-
-    expect(serialized).not.toMatch(/password/i);
-    expect(serialized).not.toMatch(/secret/i);
+    expect(result.status).toBe('ready');
+    expect(healthService.getReadinessOrThrow).toHaveBeenCalledTimes(1);
   });
 });

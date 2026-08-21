@@ -1,0 +1,178 @@
+name: fashion-erp-backend-prod
+
+services:
+  api:
+    build:
+      context: .
+      target: production
+    image: fashion-erp-backend:prod
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      APP_ROLE: api
+      DB_HOST: mysql
+      DB_PORT: 3306
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BROKERS: kafka:9092
+      # env.validation.ts hard-rejects NODE_ENV=production combined with
+      # AUTH_COOKIE_SECURE=false at boot (a real safety check — an insecure
+      # cookie must never ship in production). The shared .env this compose
+      # file loads via env_file is dev-oriented (AUTH_COOKIE_SECURE=false,
+      # correct for local http://localhost), so it must be forced back to
+      # true here for the production target regardless of what .env holds.
+      AUTH_COOKIE_SECURE: "true"
+      # This api service is expected to sit behind a reverse proxy in a real
+      # deployment (docs/PRODUCTION.md) — trust exactly one hop so
+      # request.ip reflects the real client (used by AuthRateLimitGuard and
+      # request logging), not the proxy's own address. If this image is
+      # ever run with the public internet hitting it directly (no proxy),
+      # override TRUST_PROXY to "" via .env.
+      TRUST_PROXY: "1"
+    ports:
+      - "${API_HOST_PORT:-4000}:${PORT:-3000}"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const http=require('http');const port=process.env.PORT||3000;const prefix=process.env.API_PREFIX||'api';const version=process.env.API_VERSION||'1';const path='/' + prefix + '/v' + version + '/health/ready';const req=http.get({host:'127.0.0.1',port,path,timeout:4000},res=>process.exit(res.statusCode===200?0:1));req.on('error',()=>process.exit(1));req.on('timeout',()=>{req.destroy();process.exit(1);});",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    networks:
+      - fashion-erp-network
+
+  worker:
+    image: fashion-erp-backend:prod
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      APP_ROLE: worker
+      DB_HOST: mysql
+      DB_PORT: 3306
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BROKERS: kafka:9092
+      PORT: 3001
+      # See the matching comment on the `api` service above — same
+      # production-safety requirement applies to the worker process.
+      AUTH_COOKIE_SECURE: "true"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const http=require('http');const port=process.env.PORT||3001;const prefix=process.env.API_PREFIX||'api';const version=process.env.API_VERSION||'1';const path='/' + prefix + '/v' + version + '/health/ready';const req=http.get({host:'127.0.0.1',port,path,timeout:4000},res=>process.exit(res.statusCode===200?0:1));req.on('error',()=>process.exit(1));req.on('timeout',()=>{req.destroy();process.exit(1);});",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    networks:
+      - fashion-erp-network
+
+  mysql:
+    image: mysql:8.0.40
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE:-fashion_erp}
+      MYSQL_USER: ${DB_USERNAME:-fashion_erp}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-fashion_erp}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-fashion_erp_root}
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "localhost",
+          "-u",
+          "root",
+          "-p${DB_ROOT_PASSWORD:-fashion_erp_root}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - fashion-erp-network
+
+  redis:
+    image: redis:7.4.1-alpine
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - fashion-erp-network
+
+  kafka:
+    image: apache/kafka:3.9.0
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 0
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+    networks:
+      - fashion-erp-network
+
+networks:
+  fashion-erp-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  redis_data:
+  kafka_data:

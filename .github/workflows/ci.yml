@@ -1,0 +1,77 @@
+name: CI
+
+# Phase 20 — Production Infrastructure. Scope is static verification + unit
+# tests + build + a Docker build check, run on every push/PR against this
+# backend. Deliberately does NOT run the e2e suite (test/*.e2e-spec.ts) —
+# those tests require a live MySQL/Redis/Kafka stack via docker-compose and
+# are designed/documented (see test/webhooks.e2e-spec.ts and friends) around
+# that real infrastructure, including scenarios that stop/start real
+# containers mid-test; running them against ad hoc GitHub Actions service
+# containers would not faithfully reproduce that environment and risks
+# reporting false failures. Deployment (CD) is intentionally NOT part of
+# this workflow — no deployment target/credentials exist in this repository
+# (see docs/PRODUCTION.md); automatic deployment is BLOCKED until a real
+# target is configured, not fabricated here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-and-tests:
+    name: Typecheck, Lint, Unit Tests, Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.13.1"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npx eslint "{src,apps,libs,test}/**/*.ts"
+
+      - name: Unit tests
+        run: npx jest --ci
+
+      - name: Build
+        run: npm run build
+
+  docker-build:
+    name: Docker build (production target)
+    runs-on: ubuntu-latest
+    needs: static-and-tests
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build production image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: production
+          push: false
+          # Verifies the multi-stage build (dependencies -> build -> runtime)
+          # completes end-to-end. Never pushes an image — no registry
+          # credentials are configured in this repository (see docs/PRODUCTION.md).
+          tags: fashion-erp-backend:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
