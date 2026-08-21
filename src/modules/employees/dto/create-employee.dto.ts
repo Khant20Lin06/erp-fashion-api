@@ -1,5 +1,6 @@
 import {
   IsEmail,
+  IsDateString,
   IsOptional,
   IsString,
   IsUUID,
@@ -37,6 +38,25 @@ export class CreateEmployeeDto {
   @IsEmail()
   @MaxLength(255)
   email?: string;
+
+  @IsOptional()
+  @IsDateString()
+  dateOfBirth?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  address?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  emergencyContactName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  emergencyContactPhone?: string;
 
   @IsUUID()
   companyId!: string;

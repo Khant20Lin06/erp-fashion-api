@@ -9,6 +9,10 @@ export interface EmployeeResponseDto {
   displayName: string;
   phone: string | null;
   email: string | null;
+  dateOfBirth: string | null;
+  address: string | null;
+  emergencyContactName: string | null;
+  emergencyContactPhone: string | null;
   userId: string | null;
   companyId: string;
   branchId: string;
@@ -28,6 +32,10 @@ export function toEmployeeResponseDto(employee: Employee): EmployeeResponseDto {
     displayName: employee.displayName,
     phone: employee.phone,
     email: employee.email,
+    dateOfBirth: employee.dateOfBirth,
+    address: employee.address,
+    emergencyContactName: employee.emergencyContactName,
+    emergencyContactPhone: employee.emergencyContactPhone,
     userId: employee.userId,
     companyId: employee.companyId,
     branchId: employee.branchId,

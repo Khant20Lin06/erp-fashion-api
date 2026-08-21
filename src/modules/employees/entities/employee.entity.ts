@@ -33,6 +33,28 @@ export class Employee extends BaseEntity {
   @Column({ name: 'email', type: 'varchar', length: 255, nullable: true })
   email!: string | null;
 
+  @Column({ name: 'date_of_birth', type: 'date', nullable: true })
+  dateOfBirth!: string | null;
+
+  @Column({ name: 'address', type: 'varchar', length: 500, nullable: true })
+  address!: string | null;
+
+  @Column({
+    name: 'emergency_contact_name',
+    type: 'varchar',
+    length: 200,
+    nullable: true,
+  })
+  emergencyContactName!: string | null;
+
+  @Column({
+    name: 'emergency_contact_phone',
+    type: 'varchar',
+    length: 50,
+    nullable: true,
+  })
+  emergencyContactPhone!: string | null;
+
   @Column({ name: 'user_id', type: 'char', length: 36, nullable: true })
   userId!: string | null;
 

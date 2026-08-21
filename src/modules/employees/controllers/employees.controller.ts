@@ -25,37 +25,132 @@ import {
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../rbac/guards/permission.guard';
 import { RequirePermission } from '../../rbac/decorators/require-permission.decorator';
+import { DataScopeService } from '../../rbac/services/data-scope.service';
+import { CurrentUser } from '../../../shared/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../../auth/types/authenticated-user';
+import { resolveRequestCompanyId } from '../../master-data/utils/resolve-request-company-id';
+import { resolveRequestCompanyBranchScope } from '../../master-data/utils/resolve-request-company-branch-scope';
+import { DataScope } from '../../rbac/enums/data-scope.enum';
+import { AppException } from '../../../core/errors/app.exception';
+import { ErrorCode } from '../../../core/errors/error-codes';
+
+const RESOURCE = 'employees';
 
 @ApiTags('Employees')
 @Controller('employees')
 @UseGuards(JwtAuthGuard, PermissionGuard)
 export class EmployeesController {
-  constructor(private readonly employeesService: EmployeesService) {}
+  constructor(
+    private readonly employeesService: EmployeesService,
+    private readonly dataScopeService: DataScopeService,
+  ) {}
 
   @Get()
   @RequirePermission('employees.read')
   async findAll(
+    @CurrentUser() user: AuthenticatedUser,
     @Query() query: ListEmployeesDto,
   ): Promise<{ data: EmployeeResponseDto[]; meta: unknown }> {
-    const result = await this.employeesService.findAll(query);
+    const resolved = await this.dataScopeService.resolveScope(
+      user.id,
+      RESOURCE,
+    );
+    if (!resolved) {
+      throw new AppException(
+        ErrorCode.Forbidden,
+        'No data scope is configured for this resource',
+      );
+    }
+
+    const result =
+      resolved.scope === DataScope.Own
+        ? await this.employeesService.findAllInScope(query, {
+            ownUserId: user.id,
+          })
+        : await this.employeesService.findAllInScope(
+            query,
+            await resolveRequestCompanyBranchScope(
+              this.dataScopeService,
+              user.id,
+              RESOURCE,
+              query.companyId,
+              query.branchId,
+            ),
+          );
     return {
       data: result.data.map(toEmployeeResponseDto),
       meta: result.meta,
     };
   }
 
+  @Get('me/profile')
+  @RequirePermission('employees.read')
+  async getMyProfile(
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<EmployeeResponseDto> {
+    const employee = await this.employeesService.findByUserId(user.id);
+    return toEmployeeResponseDto(employee);
+  }
+
   @Get(':id')
   @RequirePermission('employees.read')
   async findOne(
+    @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
+    @Query('companyId') companyIdQuery?: string,
   ): Promise<EmployeeResponseDto> {
-    const employee = await this.employeesService.findById(id);
+    const resolved = await this.dataScopeService.resolveScope(
+      user.id,
+      RESOURCE,
+    );
+    if (!resolved) {
+      throw new AppException(
+        ErrorCode.Forbidden,
+        'No data scope is configured for this resource',
+      );
+    }
+
+    const employee =
+      resolved.scope === DataScope.Own
+        ? await this.employeesService.findByIdInScope(id, {
+            ownUserId: user.id,
+          })
+        : await this.employeesService.findByIdInScope(
+            id,
+            await resolveRequestCompanyBranchScope(
+              this.dataScopeService,
+              user.id,
+              RESOURCE,
+              companyIdQuery,
+              undefined,
+            ),
+          );
     return toEmployeeResponseDto(employee);
   }
 
   @Post()
   @RequirePermission('employees.create')
-  async create(@Body() dto: CreateEmployeeDto): Promise<EmployeeResponseDto> {
+  async create(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CreateEmployeeDto,
+  ): Promise<EmployeeResponseDto> {
+    const resolved = await this.dataScopeService.resolveScope(
+      user.id,
+      RESOURCE,
+    );
+    if (resolved?.scope === DataScope.Own) {
+      throw new AppException(
+        ErrorCode.Forbidden,
+        'Own-scoped access cannot create employees',
+      );
+    }
+    await resolveRequestCompanyBranchScope(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      dto.companyId,
+      dto.branchId,
+    );
     const employee = await this.employeesService.create(dto);
     return toEmployeeResponseDto(employee);
   }
@@ -63,9 +158,29 @@ export class EmployeesController {
   @Patch(':id')
   @RequirePermission('employees.update')
   async update(
+    @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateEmployeeDto,
+    @Query('companyId') companyIdQuery?: string,
   ): Promise<EmployeeResponseDto> {
+    const resolved = await this.dataScopeService.resolveScope(
+      user.id,
+      RESOURCE,
+    );
+    if (resolved?.scope === DataScope.Own) {
+      throw new AppException(
+        ErrorCode.Forbidden,
+        'Own-scoped access cannot update employees',
+      );
+    }
+    const scope = await resolveRequestCompanyBranchScope(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+      undefined,
+    );
+    await this.employeesService.findByIdInScope(id, scope);
     const employee = await this.employeesService.update(id, dto);
     return toEmployeeResponseDto(employee);
   }
@@ -73,9 +188,18 @@ export class EmployeesController {
   @Post(':id/user')
   @RequirePermission('employees.update')
   async linkUser(
+    @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: LinkUserDto,
+    @Query('companyId') companyIdQuery?: string,
   ): Promise<EmployeeResponseDto> {
+    const companyId = await resolveRequestCompanyId(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+    );
+    await this.employeesService.findByIdInScope(id, { companyId });
     const employee = await this.employeesService.linkUser(id, dto.userId);
     return toEmployeeResponseDto(employee);
   }
@@ -84,8 +208,17 @@ export class EmployeesController {
   @HttpCode(HttpStatus.OK)
   @RequirePermission('employees.update')
   async unlinkUser(
+    @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
+    @Query('companyId') companyIdQuery?: string,
   ): Promise<EmployeeResponseDto> {
+    const companyId = await resolveRequestCompanyId(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+    );
+    await this.employeesService.findByIdInScope(id, { companyId });
     const employee = await this.employeesService.unlinkUser(id);
     return toEmployeeResponseDto(employee);
   }
@@ -94,8 +227,18 @@ export class EmployeesController {
   @HttpCode(HttpStatus.OK)
   @RequirePermission('employees.update')
   async terminate(
+    @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
+    @Query('companyId') companyIdQuery?: string,
   ): Promise<EmployeeResponseDto> {
+    const scope = await resolveRequestCompanyBranchScope(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+      undefined,
+    );
+    await this.employeesService.findByIdInScope(id, scope);
     const employee = await this.employeesService.terminate(id);
     return toEmployeeResponseDto(employee);
   }
@@ -104,8 +247,18 @@ export class EmployeesController {
   @HttpCode(HttpStatus.OK)
   @RequirePermission('employees.update')
   async activate(
+    @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
+    @Query('companyId') companyIdQuery?: string,
   ): Promise<EmployeeResponseDto> {
+    const scope = await resolveRequestCompanyBranchScope(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+      undefined,
+    );
+    await this.employeesService.findByIdInScope(id, scope);
     const employee = await this.employeesService.activate(id);
     return toEmployeeResponseDto(employee);
   }
@@ -114,8 +267,18 @@ export class EmployeesController {
   @HttpCode(HttpStatus.OK)
   @RequirePermission('employees.update')
   async deactivate(
+    @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
+    @Query('companyId') companyIdQuery?: string,
   ): Promise<EmployeeResponseDto> {
+    const scope = await resolveRequestCompanyBranchScope(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+      undefined,
+    );
+    await this.employeesService.findByIdInScope(id, scope);
     const employee = await this.employeesService.deactivate(id);
     return toEmployeeResponseDto(employee);
   }

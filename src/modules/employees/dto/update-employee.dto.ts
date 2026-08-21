@@ -1,5 +1,6 @@
 import {
   IsEmail,
+  IsDateString,
   IsOptional,
   IsString,
   MaxLength,
@@ -38,4 +39,23 @@ export class UpdateEmployeeDto {
   @IsEmail()
   @MaxLength(255)
   email?: string;
+
+  @IsOptional()
+  @IsDateString()
+  dateOfBirth?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  address?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  emergencyContactName?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  emergencyContactPhone?: string | null;
 }

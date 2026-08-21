@@ -24,6 +24,13 @@ export interface PaginatedEmployees {
   meta: { page: number; limit: number; total: number };
 }
 
+export interface EmployeeScopeFilter {
+  companyId?: string;
+  branchId?: string;
+  allowedBranchIds?: string[] | null;
+  ownUserId?: string;
+}
+
 const SORTABLE_FIELDS = [
   'createdAt',
   'employeeCode',
@@ -88,8 +95,120 @@ export class EmployeesService {
     return { data, meta: { page, limit, total } };
   }
 
+  async findAllInScope(
+    query: ListEmployeesDto,
+    scope: EmployeeScopeFilter,
+  ): Promise<PaginatedEmployees> {
+    const scopedQuery = { ...query };
+    if (scope.companyId) {
+      scopedQuery.companyId = scope.companyId;
+    }
+    if (scope.branchId) {
+      scopedQuery.branchId = scope.branchId;
+    }
+
+    const page = scopedQuery.page ?? DEFAULT_PAGE;
+    const limit = scopedQuery.limit ?? DEFAULT_LIMIT;
+    const sortField = resolveSortField(
+      scopedQuery.sort,
+      SORTABLE_FIELDS,
+      'createdAt',
+    );
+
+    const qb = this.employeeRepository.createQueryBuilder('employee');
+
+    if (scope.ownUserId) {
+      qb.andWhere('employee.userId = :userId', { userId: scope.ownUserId });
+    }
+
+    if (scopedQuery.companyId) {
+      qb.andWhere('employee.companyId = :companyId', {
+        companyId: scopedQuery.companyId,
+      });
+    }
+
+    if (scope.allowedBranchIds) {
+      qb.andWhere('employee.branchId IN (:...allowedBranchIds)', {
+        allowedBranchIds: scope.allowedBranchIds,
+      });
+    } else if (scopedQuery.branchId) {
+      qb.andWhere('employee.branchId = :branchId', {
+        branchId: scopedQuery.branchId,
+      });
+    }
+
+    if (scopedQuery.status) {
+      qb.andWhere('employee.status = :status', { status: scopedQuery.status });
+    }
+    if (scopedQuery.search) {
+      qb.andWhere(
+        new Brackets((sub) => {
+          sub
+            .where('employee.employeeCode LIKE :search', {
+              search: `%${scopedQuery.search}%`,
+            })
+            .orWhere('employee.displayName LIKE :search', {
+              search: `%${scopedQuery.search}%`,
+            });
+        }),
+      );
+    }
+
+    qb.orderBy(`employee.${sortField}`, scopedQuery.order ?? 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    const [data, total] = await qb.getManyAndCount();
+    return { data, meta: { page, limit, total } };
+  }
+
   async findById(id: string): Promise<Employee> {
     const employee = await this.employeeRepository.findOne({ where: { id } });
+    if (!employee) {
+      throw new AppException(ErrorCode.NotFound, 'Employee not found');
+    }
+    return employee;
+  }
+
+  async findByUserId(userId: string): Promise<Employee> {
+    const employee = await this.employeeRepository.findOne({
+      where: { userId },
+    });
+    if (!employee) {
+      throw new AppException(ErrorCode.NotFound, 'Employee not found');
+    }
+    return employee;
+  }
+
+  async findByIdInScope(
+    id: string,
+    scope: EmployeeScopeFilter,
+  ): Promise<Employee> {
+    const qb = this.employeeRepository
+      .createQueryBuilder('employee')
+      .where('employee.id = :id', { id });
+
+    if (scope.ownUserId) {
+      qb.andWhere('employee.userId = :userId', { userId: scope.ownUserId });
+    }
+
+    if (scope.companyId) {
+      qb.andWhere('employee.companyId = :companyId', {
+        companyId: scope.companyId,
+      });
+    }
+
+    if (scope.allowedBranchIds) {
+      qb.andWhere('employee.branchId IN (:...allowedBranchIds)', {
+        allowedBranchIds: scope.allowedBranchIds,
+      });
+    } else if (scope.branchId) {
+      qb.andWhere('employee.branchId = :branchId', {
+        branchId: scope.branchId,
+      });
+    }
+
+    const employee = await qb.getOne();
     if (!employee) {
       throw new AppException(ErrorCode.NotFound, 'Employee not found');
     }
@@ -147,6 +266,10 @@ export class EmployeesService {
       displayName: dto.displayName ?? `${dto.firstName} ${dto.lastName}`,
       phone: dto.phone ?? null,
       email: dto.email ?? null,
+      dateOfBirth: dto.dateOfBirth ?? null,
+      address: dto.address ?? null,
+      emergencyContactName: dto.emergencyContactName ?? null,
+      emergencyContactPhone: dto.emergencyContactPhone ?? null,
       userId: null,
       companyId: dto.companyId,
       branchId: dto.branchId,
@@ -166,6 +289,14 @@ export class EmployeesService {
     if (dto.displayName !== undefined) employee.displayName = dto.displayName;
     if (dto.phone !== undefined) employee.phone = dto.phone;
     if (dto.email !== undefined) employee.email = dto.email;
+    if (dto.dateOfBirth !== undefined) employee.dateOfBirth = dto.dateOfBirth;
+    if (dto.address !== undefined) employee.address = dto.address;
+    if (dto.emergencyContactName !== undefined) {
+      employee.emergencyContactName = dto.emergencyContactName;
+    }
+    if (dto.emergencyContactPhone !== undefined) {
+      employee.emergencyContactPhone = dto.emergencyContactPhone;
+    }
 
     return this.employeeRepository.save(employee);
   }
