@@ -7,11 +7,14 @@ import authConfig from './config/auth.config';
 import kafkaConfig from './config/kafka.config';
 import outboxConfig from './config/outbox.config';
 import redisConfig from './config/redis.config';
+import queueConfig from './config/queue.config';
+import aiConfig from './config/ai.config';
 import { envValidationSchema } from './config/env.validation';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { HealthModule } from './health/health.module';
 import { createLoggerOptions } from './common/logging/logger.options';
 import { DatabaseModule } from './database/database.module';
+import { DocumentationDatabaseModule } from './database/documentation-database.module';
 import { RequestContextModule } from './core/context/request-context.module';
 import { RequestContextMiddleware } from './core/context/request-context.middleware';
 import { TransactionModule } from './core/transaction/transaction.module';
@@ -20,6 +23,8 @@ import { AuthModule } from './modules/auth/auth.module';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { OrganizationModule } from './modules/organization/organization.module';
 import { EmployeesModule } from './modules/employees/employees.module';
+import { HrModule } from './modules/hr/hr.module';
+import { PayrollModule } from './modules/payroll/payroll.module';
 import { SalesAccountsModule } from './modules/sales-accounts/sales-accounts.module';
 import { MasterDataModule } from './modules/master-data/master-data.module';
 import { ProductsModule } from './modules/products/products.module';
@@ -29,12 +34,24 @@ import { PurchaseModule } from './modules/purchase/purchase.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
+import { PromotionsModule } from './modules/promotions/promotions.module';
+import { LoyaltyModule } from './modules/loyalty/loyalty.module';
+import { SalesReturnsModule } from './modules/sales-returns/sales-returns.module';
 import { KafkaModule } from './modules/kafka/kafka.module';
 import { OutboxModule } from './modules/outbox/outbox.module';
 import { RedisModule } from './modules/redis/redis.module';
 import { QueueModule } from './modules/queue/queue.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { AiAssistantModule } from './modules/ai-assistant/ai-assistant.module';
+import { SettingsModule } from './modules/settings/settings.module';
+import { ObservabilityModule } from './observability/observability.module';
+import { isOpenApiGenerationMode } from './shared/utils/runtime-flags';
+
+const databaseImport = isOpenApiGenerationMode()
+  ? DocumentationDatabaseModule
+  : DatabaseModule;
 
 @Module({
   imports: [
@@ -47,6 +64,8 @@ import { ReportsModule } from './modules/reports/reports.module';
         kafkaConfig,
         outboxConfig,
         redisConfig,
+        queueConfig,
+        aiConfig,
       ],
       validationSchema: envValidationSchema,
       validationOptions: {
@@ -57,7 +76,8 @@ import { ReportsModule } from './modules/reports/reports.module';
       inject: [ConfigService],
       useFactory: createLoggerOptions,
     }),
-    DatabaseModule,
+    ObservabilityModule,
+    databaseImport,
     RequestContextModule,
     TransactionModule,
     RedisModule,
@@ -70,6 +90,8 @@ import { ReportsModule } from './modules/reports/reports.module';
     RbacModule,
     OrganizationModule,
     EmployeesModule,
+    HrModule,
+    PayrollModule,
     SalesAccountsModule,
     MasterDataModule,
     ProductsModule,
@@ -77,10 +99,16 @@ import { ReportsModule } from './modules/reports/reports.module';
     SalesModule,
     PurchaseModule,
     InventoryModule,
+    PromotionsModule,
+    LoyaltyModule,
+    SalesReturnsModule,
     PaymentsModule,
     AccountingModule,
     NotificationsModule,
+    WebhooksModule,
     ReportsModule,
+    AiAssistantModule,
+    SettingsModule,
   ],
 })
 export class AppModule implements NestModule {
