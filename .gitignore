@@ -14,6 +14,9 @@ npm-debug.log*
 # coverage
 /coverage
 
+# local database backups (scripts/backup-database.sh default BACKUP_DIR)
+/backups
+
 # OS
 .DS_Store
 Thumbs.db
@@ -28,3 +31,9 @@ Thumbs.db
 
 # swc
 .swc
+
+# ad-hoc local verification scripts (never committed — several of these
+# have hardcoded dev credentials for quick manual testing against a local
+# stack)
+/test-*.js
+/text.txt

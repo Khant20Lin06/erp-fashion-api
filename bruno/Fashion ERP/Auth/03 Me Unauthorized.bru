@@ -1,0 +1,20 @@
+meta {
+  name: 03 Me Unauthorized
+  type: http
+  seq: 3
+  tags: [
+    auth
+    security
+  ]
+}
+
+get {
+  url: {{baseUrl}}/api/v1/auth/me
+  auth: none
+}
+
+tests {
+  test("missing token is rejected", function() {
+    expect(res.status).to.equal(401);
+  });
+}

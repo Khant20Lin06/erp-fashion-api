@@ -1,0 +1,56 @@
+meta {
+  name: 01 Login
+  type: http
+  seq: 1
+  tags: [
+    auth
+    smoke
+  ]
+}
+
+post {
+  url: {{baseUrl}}/api/v1/auth/login
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body {
+  {
+    "email": "{{authEmail}}",
+    "password": "{{authPassword}}"
+  }
+}
+
+script:post-response {
+  const setCookieHeader =
+    res.headers["set-cookie"] ||
+    res.headers["Set-Cookie"] ||
+    [];
+  const cookies = Array.isArray(setCookieHeader)
+    ? setCookieHeader
+    : [setCookieHeader];
+  const accessCookie = cookies.find((value) =>
+    typeof value === "string" &&
+    value.startsWith("fashion_erp_access_token=")
+  );
+
+  if (accessCookie) {
+    const token = accessCookie.split(";")[0].split("=").slice(1).join("=");
+    bru.setVar("accessToken", token);
+  }
+}
+
+tests {
+  test("login returns 200", function() {
+    expect(res.status).to.equal(200);
+  });
+
+  test("access token is extracted", function() {
+    expect(bru.getVar("accessToken")).to.be.a("string");
+    expect(bru.getVar("accessToken")).to.not.equal("");
+  });
+}
+​

@@ -1,0 +1,19 @@
+meta {
+  name: 01 Get My Settings
+  type: http
+  seq: 1
+  tags: [
+    settings
+    user
+    self
+  ]
+}
+
+get {
+  url: {{baseUrl}}/api/v1/settings/me?companyId={{companyId}}&branchId={{branchId}}
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

@@ -1,0 +1,24 @@
+meta {
+  name: 04 Me
+  type: http
+  seq: 4
+  tags: [
+    auth
+    smoke
+  ]
+}
+
+get {
+  url: {{baseUrl}}/api/v1/auth/me
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
+
+tests {
+  test("authenticated me returns 200", function() {
+    expect(res.status).to.equal(200);
+  });
+}

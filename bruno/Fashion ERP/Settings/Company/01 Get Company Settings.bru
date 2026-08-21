@@ -1,0 +1,18 @@
+meta {
+  name: 01 Get Company Settings
+  type: http
+  seq: 1
+  tags: [
+    settings
+    company
+  ]
+}
+
+get {
+  url: {{baseUrl}}/api/v1/settings/company/{{companyId}}
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

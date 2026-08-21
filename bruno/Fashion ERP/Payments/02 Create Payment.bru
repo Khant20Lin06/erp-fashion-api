@@ -1,0 +1,48 @@
+meta {
+  name: 02 Create Payment
+  type: http
+  seq: 2
+  tags: [
+    payments
+    event-flow
+  ]
+}
+
+post {
+  url: {{baseUrl}}/api/v1/payments
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  content-type: application/json
+  Idempotency-Key: bruno-payment-create-001
+}
+
+body {
+  {
+    "companyId": "{{companyId}}",
+    "branchId": "{{branchId}}",
+    "direction": "RECEIPT",
+    "customerId": "{{customerId}}",
+    "paymentMethodId": "{{paymentMethodId}}",
+    "amount": "125.00",
+    "currency": "USD",
+    "reference": "BRUNO-PAYMENT-001",
+    "paymentDate": "{{asOfDate}}",
+    "notes": "Bruno payment verification",
+    "allocations": [
+      {
+        "referenceType": "SALE",
+        "referenceId": "{{customerId}}",
+        "allocatedAmount": "125.00"
+      }
+    ]
+  }
+}
+
+tests {
+  test("payment create returns 201 or 200 for idempotent replay", function() {
+    expect([200, 201]).to.include(res.status);
+  });
+}

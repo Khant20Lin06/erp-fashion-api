@@ -1,0 +1,19 @@
+meta {
+  name: 02 Approve Leave Request
+  type: http
+  seq: 2
+  tags: [
+    hr
+    leave
+    approval
+  ]
+}
+
+post {
+  url: {{baseUrl}}/api/v1/leave-requests/{{leaveRequestId}}/approve?companyId={{companyId}}
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

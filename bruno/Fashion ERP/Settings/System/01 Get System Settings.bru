@@ -1,0 +1,18 @@
+meta {
+  name: 01 Get System Settings
+  type: http
+  seq: 1
+  tags: [
+    settings
+    system
+  ]
+}
+
+get {
+  url: {{baseUrl}}/api/v1/settings/system
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

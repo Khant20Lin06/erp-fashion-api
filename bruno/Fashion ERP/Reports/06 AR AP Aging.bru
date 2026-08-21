@@ -1,0 +1,24 @@
+meta {
+  name: 06 AR AP Aging
+  type: http
+  seq: 6
+  tags: [
+    reports
+    accounting
+  ]
+}
+
+get {
+  url: {{baseUrl}}/api/v1/reports/ar-ap-aging?companyId={{companyId}}&branchId={{branchId}}&asOfDate={{asOfDate}}
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
+
+tests {
+  test("ar ap aging returns 200", function() {
+    expect(res.status).to.equal(200);
+  });
+}

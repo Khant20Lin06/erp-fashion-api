@@ -1,0 +1,24 @@
+meta {
+  name: 01 List Purchase Orders
+  type: http
+  seq: 1
+  tags: [
+    purchases
+    smoke
+  ]
+}
+
+get {
+  url: {{baseUrl}}/api/v1/purchase-orders?companyId={{companyId}}
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
+
+tests {
+  test("purchase orders list returns 200", function() {
+    expect(res.status).to.equal(200);
+  });
+}

@@ -1,0 +1,24 @@
+meta {
+  name: 01 List Notifications
+  type: http
+  seq: 1
+  tags: [
+    notifications
+    smoke
+  ]
+}
+
+get {
+  url: {{baseUrl}}/api/v1/notifications
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
+
+tests {
+  test("notifications list returns 200", function() {
+    expect(res.status).to.equal(200);
+  });
+}

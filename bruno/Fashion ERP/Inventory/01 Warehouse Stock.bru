@@ -1,0 +1,24 @@
+meta {
+  name: 01 Warehouse Stock
+  type: http
+  seq: 1
+  tags: [
+    inventory
+    smoke
+  ]
+}
+
+get {
+  url: {{baseUrl}}/api/v1/warehouse-stock?companyId={{companyId}}&warehouseId={{warehouseId}}
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
+
+tests {
+  test("warehouse stock returns 200", function() {
+    expect(res.status).to.equal(200);
+  });
+}

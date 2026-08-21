@@ -1,0 +1,20 @@
+meta {
+  name: 01 Health
+  type: http
+  seq: 1
+  tags: [
+    health
+    smoke
+  ]
+}
+
+get {
+  url: {{baseUrl}}/api/v1/health
+  auth: none
+}
+
+tests {
+  test("health returns 200", function() {
+    expect(res.status).to.equal(200);
+  });
+}

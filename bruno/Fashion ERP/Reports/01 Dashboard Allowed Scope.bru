@@ -1,0 +1,25 @@
+meta {
+  name: 01 Dashboard Allowed Scope
+  type: http
+  seq: 1
+  tags: [
+    reports
+    dashboard
+    scope
+  ]
+}
+
+get {
+  url: {{baseUrl}}/api/v1/reports/dashboard?companyId={{companyId}}&branchId={{branchId}}&fromDate={{fromDate}}&toDate={{toDate}}
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
+
+tests {
+  test("dashboard allowed scope returns 200", function() {
+    expect(res.status).to.equal(200);
+  });
+}

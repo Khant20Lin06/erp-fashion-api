@@ -1,0 +1,19 @@
+meta {
+  name: 01 My Attendance
+  type: http
+  seq: 1
+  tags: [
+    hr
+    attendance
+    self
+  ]
+}
+
+get {
+  url: {{baseUrl}}/api/v1/attendance
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}

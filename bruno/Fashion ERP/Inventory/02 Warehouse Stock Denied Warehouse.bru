@@ -1,0 +1,25 @@
+meta {
+  name: 02 Warehouse Stock Denied Warehouse
+  type: http
+  seq: 2
+  tags: [
+    inventory
+    security
+    scope
+  ]
+}
+
+get {
+  url: {{baseUrl}}/api/v1/warehouse-stock?companyId={{companyId}}&warehouseId={{deniedWarehouseId}}
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
+
+tests {
+  test("unauthorized warehouse access is denied", function() {
+    expect(res.status).to.equal(403);
+  });
+}

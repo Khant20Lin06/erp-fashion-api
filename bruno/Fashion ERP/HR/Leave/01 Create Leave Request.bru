@@ -1,0 +1,30 @@
+meta {
+  name: 01 Create Leave Request
+  type: http
+  seq: 1
+  tags: [
+    hr
+    leave
+    self
+  ]
+}
+
+post {
+  url: {{baseUrl}}/api/v1/leave-requests?companyId={{companyId}}
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "employeeId": "{{employeeId}}",
+    "leaveTypeId": "{{leaveTypeId}}",
+    "fromDate": "2026-08-15",
+    "toDate": "2026-08-15",
+    "reason": "Medical appointment"
+  }
+}

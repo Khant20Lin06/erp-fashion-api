@@ -1,0 +1,24 @@
+meta {
+  name: 03 Trial Balance
+  type: http
+  seq: 3
+  tags: [
+    accounting
+    smoke
+  ]
+}
+
+get {
+  url: {{baseUrl}}/api/v1/trial-balance?companyId={{companyId}}&branchId={{branchId}}&asOfDate={{asOfDate}}
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
+
+tests {
+  test("trial balance returns 200", function() {
+    expect(res.status).to.equal(200);
+  });
+}

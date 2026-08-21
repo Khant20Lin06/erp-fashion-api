@@ -17,18 +17,20 @@ the phased roadmap under [ai](./%E2%80%8Cai).
 
 ## Status
 
-This repository currently implements Phases 01-22.
+This repository currently implements Phases 01-31.
 
 ### Implemented
 
 - Core infrastructure, auth, RBAC, organization, users/employees, master data, products, customers/suppliers, and sales
 - Purchase orders, inventory, inventory ledger, payments, accounting, general ledger, and trial balance
 - Transactional outbox, Kafka consumers/producers, Redis cache, BullMQ queues/workers, notifications, and reports/dashboard
-- Request correlation ID, structured logging, validated configuration, Swagger/OpenAPI, and Jest unit/e2e coverage
+- Request correlation ID, structured logging, validated configuration, Swagger/OpenAPI generation/validation, Bruno API collection assets, and Jest unit/e2e coverage
+- HR (departments, designations, employee assignments, attendance, leave types/requests with approve/reject/cancel and self-service), and generic Settings (system/company/branch/user scope, with definition allowlisting and Redis-cached reads)
+- API-vs-worker runtime role split (`APP_ROLE=api|worker|all`): the worker role runs BullMQ/Kafka/outbox consumers with no public business API or Swagger surface, while the api role serves HTTP without running those consumers
 
 ### Not Implemented Yet
 
-Phase 23 and beyond remain out of scope for the current repository state.
+Phase 32 and beyond remain out of scope for the current repository state.
 
 ## Development Setup
 
@@ -75,6 +77,15 @@ Container-to-container communication uses Docker service names (`mysql`,
 `.env` (`API_HOST_PORT`, `DB_HOST_PORT`, `REDIS_HOST_PORT`,
 `KAFKA_HOST_PORT`).
 
+This diagram describes `docker-compose.yml` (development, single all-in-one
+`api` service, `APP_ROLE` unset/`all`). Production uses the separate
+`docker-compose.prod.yml`, which splits the process into two containers
+from the same image — `api` (`APP_ROLE=api`, serves HTTP/Swagger, no
+BullMQ/Kafka consumers) and `worker` (`APP_ROLE=worker`, runs BullMQ
+workers/Kafka consumers/outbox polling, exposes only `/health/*` and
+`/metrics` over HTTP, no business API or Swagger surface) — see
+`docs/PRODUCTION.md`.
+
 ## Docker Commands
 
 ```bash
@@ -118,13 +129,26 @@ npm test
 npm run test:e2e
 npm run test:cov
 npm run lint
+npm run openapi:generate
+npm run openapi:validate
 ```
 
 ## API
 
 - Base URL: `/api/v1`
 - Health check: `GET /api/v1/health`
-- Swagger UI: `/api/docs`
+- Swagger UI: `/docs`
+- OpenAPI JSON: `/docs-json`
+- Legacy Swagger aliases: `/api/docs` and `/api/docs-json`
+- Auth contract: httpOnly session cookie for browser flows, plus `Authorization: Bearer <JWT>` support for API tooling
+
+## API Tooling
+
+- OpenAPI generation: `npm run openapi:generate`
+- OpenAPI validation: `npm run openapi:validate`
+- Bruno collection root: [bruno/Fashion ERP](./bruno/Fashion%20ERP)
+
+Swagger can be disabled outside development by setting `ENABLE_SWAGGER=false`.
 
 ## Project Architecture
 
@@ -143,3 +167,6 @@ src/
 
 Business modules are already present phase-by-phase per
 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
+
+See [docs/OPENAPI.md](./docs/OPENAPI.md) and [docs/BRUNO.md](./docs/BRUNO.md)
+for the API contract and Bruno collection workflow.

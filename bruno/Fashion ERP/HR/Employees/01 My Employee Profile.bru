@@ -1,0 +1,19 @@
+meta {
+  name: 01 My Employee Profile
+  type: http
+  seq: 1
+  tags: [
+    hr
+    employees
+    self
+  ]
+}
+
+get {
+  url: {{baseUrl}}/api/v1/employees/me/profile
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{accessToken}}
+}
