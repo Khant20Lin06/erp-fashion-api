@@ -18,6 +18,7 @@ import { AiConversationService } from './services/ai-conversation.service';
 import { AiRagService } from './services/ai-rag.service';
 import { AiToolExecutorService } from './services/ai-tool-executor.service';
 import { AiKnowledgeService } from './services/ai-knowledge.service';
+import { QdrantVectorStoreService } from './services/qdrant-vector-store.service';
 import { AiChatController } from './controllers/ai-chat.controller';
 import { AiConversationsController } from './controllers/ai-conversations.controller';
 import { AiKnowledgeController } from './controllers/ai-knowledge.controller';
@@ -26,6 +27,7 @@ import { AI_TOOLS, AiTool } from './tools/ai-tool.interface';
 import { SalesSummaryTool } from './tools/sales-summary.tool';
 import { TopProductsTool } from './tools/top-products.tool';
 import { InventoryStockSummaryTool } from './tools/inventory-stock-summary.tool';
+import { SlowMovingStockTool } from './tools/slow-moving-stock.tool';
 import { ArApAgingTool } from './tools/ar-ap-aging.tool';
 import { ProfitLossTool } from './tools/profit-loss.tool';
 import { BalanceSheetTool } from './tools/balance-sheet.tool';
@@ -34,6 +36,7 @@ const AI_TOOL_PROVIDERS = [
   SalesSummaryTool,
   TopProductsTool,
   InventoryStockSummaryTool,
+  SlowMovingStockTool,
   ArApAgingTool,
   ProfitLossTool,
   BalanceSheetTool,
@@ -83,6 +86,7 @@ const AI_TOOL_PROVIDERS = [
     AiRagService,
     AiToolExecutorService,
     AiKnowledgeService,
+    QdrantVectorStoreService,
     KnowledgeIngestionWorker,
     ...AI_TOOL_PROVIDERS,
     {

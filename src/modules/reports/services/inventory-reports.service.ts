@@ -3,9 +3,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { WarehouseStock } from '../../inventory/entities/warehouse-stock.entity';
 import { StockMovement } from '../../inventory/entities/stock-movement.entity';
+import { SaleItem } from '../../sales/entities/sale-item.entity';
+import { SaleStatus } from '../../sales/entities/sale-status.enum';
 import {
   InventoryMovementQueryDto,
   InventoryStockSummaryQueryDto,
+  SlowMovingStockQueryDto,
 } from '../dto/inventory-report-query.dto';
 import {
   DEFAULT_LIMIT,
@@ -40,6 +43,24 @@ export interface PaginatedMovements {
   meta: { page: number; limit: number; total: number };
 }
 
+export interface SlowMovingStockRow {
+  warehouseId: string;
+  warehouseName: string;
+  productVariantId: string;
+  sku: string;
+  productName: string;
+  onHandQuantity: number;
+  /** Real SUM(SaleItem.quantity) across CONFIRMED sales within
+   * [fromDate, toDate] for this exact variant — 0 (not null) when the
+   * variant sold zero units in the window, since "never sold" is the
+   * strongest slow-moving signal, not a missing value. */
+  unitsSoldInPeriod: number;
+  sellingPrice: string;
+}
+
+const DEFAULT_SLOW_MOVING_WINDOW_DAYS = 30;
+const MAX_SLOW_MOVING_ROWS = 25;
+
 /**
  * New Phase 22 report — Inventory (stock summary/movement), quantity-only,
  * from real WarehouseStock/StockMovement data (Phase 14). NO valuation/COGS
@@ -56,6 +77,8 @@ export class InventoryReportsService {
     private readonly warehouseStockRepository: Repository<WarehouseStock>,
     @InjectRepository(StockMovement)
     private readonly stockMovementRepository: Repository<StockMovement>,
+    @InjectRepository(SaleItem)
+    private readonly saleItemRepository: Repository<SaleItem>,
   ) {}
 
   async stockSummary(
@@ -112,6 +135,111 @@ export class InventoryReportsService {
       sku: row.sku,
       onHandQuantity: Number(row.onHandQuantity),
       reservedQuantity: Number(row.reservedQuantity),
+    }));
+  }
+
+  /**
+   * In-stock variants ranked by how few units sold in a recent window —
+   * the real signal a promotion/discount decision needs, as opposed to
+   * TopProductsTool's inverse concept (SalesReportsService.byProduct(),
+   * which INNER JOINs sale.items and groups by productNameSnapshot text,
+   * so a variant with ZERO sales never appears there at all — exactly the
+   * variants a discount decision cares most about). Built as its own
+   * query rather than reusing byProduct() with a different sort, since
+   * "in stock but never sold" requires starting from WarehouseStock and
+   * LEFT JOINing sales activity, not starting from sales and having
+   * nothing to join FROM for a product that was never sold.
+   *
+   * onHandQuantity > 0 only — an out-of-stock variant isn't a discount
+   * candidate regardless of how slowly it sold. sellingPrice is included
+   * so the LLM (or a human) has a real number to reason a discount
+   * percentage against, never inventing one.
+   */
+  async slowMoving(
+    companyId: string,
+    query: SlowMovingStockQueryDto & { allowedBranchIds?: string[] | null },
+  ): Promise<SlowMovingStockRow[]> {
+    const toDate = query.toDate ?? new Date().toISOString().slice(0, 10);
+    const fromDate =
+      query.fromDate ??
+      new Date(
+        new Date(toDate).getTime() -
+          DEFAULT_SLOW_MOVING_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+      )
+        .toISOString()
+        .slice(0, 10);
+
+    const qb = this.warehouseStockRepository
+      .createQueryBuilder('stock')
+      .innerJoin('stock.warehouse', 'warehouse')
+      .innerJoin('stock.productVariant', 'variant')
+      .innerJoin('variant.product', 'product')
+      .leftJoin(
+        (subQuery) =>
+          subQuery
+            .select('item.product_variant_id', 'productVariantId')
+            .addSelect('SUM(item.quantity)', 'unitsSold')
+            .from(SaleItem, 'item')
+            .innerJoin('item.sale', 'sale')
+            .where('sale.status = :status', { status: SaleStatus.Confirmed })
+            .andWhere('sale.transactionDate >= :fromDate', { fromDate })
+            .andWhere('sale.transactionDate <= :toDate', { toDate })
+            .groupBy('item.product_variant_id'),
+        'salesInPeriod',
+        'salesInPeriod.productVariantId = variant.id',
+      )
+      .where('warehouse.companyId = :companyId', { companyId })
+      .andWhere('stock.onHandQuantity > 0');
+
+    if (query.warehouseId) {
+      qb.andWhere('stock.warehouseId = :warehouseId', {
+        warehouseId: query.warehouseId,
+      });
+    }
+    if (query.branchId) {
+      qb.andWhere('warehouse.branchId = :branchId', {
+        branchId: query.branchId,
+      });
+    } else if (query.allowedBranchIds?.length) {
+      qb.andWhere('warehouse.branchId IN (:...allowedBranchIds)', {
+        allowedBranchIds: query.allowedBranchIds,
+      });
+    }
+
+    qb.select([
+      'warehouse.id AS warehouseId',
+      'warehouse.name AS warehouseName',
+      'variant.id AS productVariantId',
+      'variant.sku AS sku',
+      'product.name AS productName',
+      'stock.onHandQuantity AS onHandQuantity',
+      'variant.sellingPrice AS sellingPrice',
+    ])
+      .addSelect('COALESCE(salesInPeriod.unitsSold, 0)', 'unitsSoldInPeriod')
+      .orderBy('unitsSoldInPeriod', 'ASC')
+      .addOrderBy('stock.onHandQuantity', 'DESC')
+      .limit(MAX_SLOW_MOVING_ROWS);
+
+    const rows = await qb.getRawMany<{
+      warehouseId: string;
+      warehouseName: string;
+      productVariantId: string;
+      sku: string;
+      productName: string;
+      onHandQuantity: string | number;
+      sellingPrice: string;
+      unitsSoldInPeriod: string | number;
+    }>();
+
+    return rows.map((row) => ({
+      warehouseId: row.warehouseId,
+      warehouseName: row.warehouseName,
+      productVariantId: row.productVariantId,
+      sku: row.sku,
+      productName: row.productName,
+      onHandQuantity: Number(row.onHandQuantity),
+      unitsSoldInPeriod: Number(row.unitsSoldInPeriod),
+      sellingPrice: row.sellingPrice,
     }));
   }
 

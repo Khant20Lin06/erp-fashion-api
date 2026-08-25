@@ -5,6 +5,7 @@ import { JournalEntryLine } from '../accounting/entities/journal-entry-line.enti
 import { Customer } from '../customer-supplier/entities/customer.entity';
 import { Supplier } from '../customer-supplier/entities/supplier.entity';
 import { Sale } from '../sales/entities/sale.entity';
+import { SaleItem } from '../sales/entities/sale-item.entity';
 import { PurchaseOrder } from '../purchase/entities/purchase-order.entity';
 import { Payment } from '../payments/entities/payment.entity';
 import { WarehouseStock } from '../inventory/entities/warehouse-stock.entity';
@@ -64,6 +65,7 @@ import { AccountingModule } from '../accounting/accounting.module';
       Customer,
       Supplier,
       Sale,
+      SaleItem,
       PurchaseOrder,
       Payment,
       WarehouseStock,

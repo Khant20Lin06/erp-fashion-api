@@ -9,12 +9,24 @@ import { validateToolArguments } from './validate-tool-arguments';
 export class ProfitLossTool implements AiTool {
   readonly name = 'get_profit_loss';
   readonly description =
-    'Get profit & loss (revenue, expense, net income) for a date range, from posted journal entries.';
+    'Get real accounting profit & loss (revenue, expense, net income) for a date range, from POSTED journal entries only — the accounting-books answer, not the POS-sales answer. ' +
+    'Use this for "how much profit did we make / net income / are we profitable". ' +
+    'For raw sales/revenue totals without expenses, use get_sales_summary instead — they answer different questions and can legitimately show different numbers. ' +
+    'No COGS/gross-profit line exists; this returns revenue, expense, and net income only. ' +
+    'Omitting fromDate/toDate returns an ALL-TIME total, not just today — always pass explicit dates for "this month"/"this quarter" style questions.';
   readonly parameters = {
     type: 'object',
     properties: {
-      fromDate: { type: 'string', format: 'date' },
-      toDate: { type: 'string', format: 'date' },
+      fromDate: {
+        type: 'string',
+        format: 'date',
+        description: 'Start date (inclusive), ISO 8601. Omit together with toDate only for an all-time total.',
+      },
+      toDate: {
+        type: 'string',
+        format: 'date',
+        description: 'End date (inclusive), ISO 8601. Omit together with fromDate only for an all-time total.',
+      },
     },
   };
   readonly requiredPermission = 'reports.profit_loss.read';

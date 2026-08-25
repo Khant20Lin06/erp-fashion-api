@@ -17,7 +17,9 @@ import { validateToolArguments } from './validate-tool-arguments';
 export class ArApAgingTool implements AiTool {
   readonly name = 'get_ar_ap_aging';
   readonly description =
-    'Get accounts receivable and accounts payable aging (current, 1-30, 31-60, 61-90, 90+ days) as of a date, aggregated per customer/supplier.';
+    'Get accounts receivable and accounts payable aging (current, 1-30, 31-60, 61-90, 90+ days) as of a date, broken down per customer/supplier. ' +
+    'Use this for "who owes us money / what do we owe suppliers / overdue balances / customer aging". ' +
+    'This is the only balance-related tool available — there is no separate single-customer live-balance lookup; find that customer\'s row in this tool\'s per-customer breakdown instead of claiming a balance you were not given.';
   readonly parameters = {
     type: 'object',
     properties: {

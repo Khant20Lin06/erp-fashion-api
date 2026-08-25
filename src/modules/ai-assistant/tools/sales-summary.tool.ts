@@ -14,19 +14,23 @@ import { validateToolArguments } from './validate-tool-arguments';
 export class SalesSummaryTool implements AiTool {
   readonly name = 'get_sales_summary';
   readonly description =
-    'Get total sales count, grand total, subtotal, discount, and tax for a date range (CONFIRMED sales only).';
+    'Get POS/sales-order revenue for a date range: sale count, grand total, subtotal, discount, tax (CONFIRMED sales only). ' +
+    'This is TOP-LINE REVENUE, not profit — it does not subtract expenses/cost of goods. ' +
+    'Use this for "how much did we sell / how many sales / total revenue this week". ' +
+    'For net income or "how much profit did we make", use get_profit_loss instead. ' +
+    'Omitting fromDate/toDate returns ALL-TIME totals, not just today — always pass explicit dates for "today"/"this week"/"this month" style questions.';
   readonly parameters = {
     type: 'object',
     properties: {
       fromDate: {
         type: 'string',
         format: 'date',
-        description: 'Start date (inclusive), ISO 8601',
+        description: 'Start date (inclusive), ISO 8601. Omit together with toDate only for an all-time total.',
       },
       toDate: {
         type: 'string',
         format: 'date',
-        description: 'End date (inclusive), ISO 8601',
+        description: 'End date (inclusive), ISO 8601. Omit together with fromDate only for an all-time total.',
       },
     },
   };

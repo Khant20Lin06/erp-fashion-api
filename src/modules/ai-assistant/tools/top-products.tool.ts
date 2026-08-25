@@ -9,19 +9,21 @@ import { validateToolArguments } from './validate-tool-arguments';
 export class TopProductsTool implements AiTool {
   readonly name = 'get_top_products';
   readonly description =
-    'Get the top-selling products by revenue for a date range (CONFIRMED sales only, top 5).';
+    'Get the top 5 best-selling products ranked by revenue for a date range (CONFIRMED sales only). ' +
+    'Use this for "best sellers / top products / what sells the most". Not for a single product\'s current stock — use get_inventory_stock_summary for that. ' +
+    'Omitting fromDate/toDate returns an ALL-TIME ranking, not just today — always pass explicit dates for "this week"/"this month" style questions.';
   readonly parameters = {
     type: 'object',
     properties: {
       fromDate: {
         type: 'string',
         format: 'date',
-        description: 'Start date (inclusive), ISO 8601',
+        description: 'Start date (inclusive), ISO 8601. Omit together with toDate only for an all-time ranking.',
       },
       toDate: {
         type: 'string',
         format: 'date',
-        description: 'End date (inclusive), ISO 8601',
+        description: 'End date (inclusive), ISO 8601. Omit together with fromDate only for an all-time ranking.',
       },
     },
   };

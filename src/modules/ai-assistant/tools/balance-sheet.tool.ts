@@ -9,7 +9,10 @@ import { validateToolArguments } from './validate-tool-arguments';
 export class BalanceSheetTool implements AiTool {
   readonly name = 'get_balance_sheet';
   readonly description =
-    'Get the balance sheet (assets, liabilities, equity) as of a date, from posted journal entries.';
+    'Get the balance sheet (assets, liabilities, equity) as of a single point in time, from POSTED journal entries only. ' +
+    'Use this for "what are we worth / total assets / total liabilities / financial position as of [date]". ' +
+    'This is a snapshot as of one date, not a range — for a period\'s revenue/expense activity use get_profit_loss instead. ' +
+    'The result includes a `balanced` boolean confirming assets = liabilities + equity; if it is false, say so explicitly rather than silently ignoring it.';
   readonly parameters = {
     type: 'object',
     properties: {

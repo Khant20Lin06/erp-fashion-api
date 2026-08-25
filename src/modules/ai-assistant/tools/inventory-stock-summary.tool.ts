@@ -17,7 +17,10 @@ import { validateToolArguments } from './validate-tool-arguments';
 export class InventoryStockSummaryTool implements AiTool {
   readonly name = 'get_inventory_stock_summary';
   readonly description =
-    'Get current on-hand and reserved stock quantities per warehouse and product variant. Returns raw quantities only — no reorder-level/low-stock threshold exists in this system.';
+    'Get current on-hand and reserved stock quantities per warehouse and product variant. ' +
+    'Use this for "how much stock do we have / what is low on stock / is X in stock". ' +
+    'There is NO reorder-level or low-stock threshold field in this system — this tool returns raw quantities only. ' +
+    'If asked "what is low on stock", call this tool and judge "low" from the returned quantities yourself; never state or imply a specific reorder threshold exists.';
   readonly parameters = {
     type: 'object',
     properties: {

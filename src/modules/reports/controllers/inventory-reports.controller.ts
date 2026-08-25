@@ -3,11 +3,13 @@ import { ApiTags } from '@nestjs/swagger';
 import { InventoryReportsService } from '../services/inventory-reports.service';
 import type {
   PaginatedMovements,
+  SlowMovingStockRow,
   StockSummaryRow,
 } from '../services/inventory-reports.service';
 import {
   InventoryMovementQueryDto,
   InventoryStockSummaryQueryDto,
+  SlowMovingStockQueryDto,
 } from '../dto/inventory-report-query.dto';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../rbac/guards/permission.guard';
@@ -63,6 +65,24 @@ export class InventoryReportsController {
       query.branchId,
     );
     return this.inventoryReportsService.stockSummary(scope.companyId, {
+      ...query,
+      branchId: scope.branchId,
+      allowedBranchIds: scope.allowedBranchIds,
+    });
+  }
+
+  @Get('slow-moving')
+  @RequirePermission('reports.inventory.read')
+  async slowMoving(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: SlowMovingStockQueryDto,
+  ): Promise<SlowMovingStockRow[]> {
+    const scope = await this.resolveScope(
+      user,
+      query.companyId,
+      query.branchId,
+    );
+    return this.inventoryReportsService.slowMoving(scope.companyId, {
       ...query,
       branchId: scope.branchId,
       allowedBranchIds: scope.allowedBranchIds,
