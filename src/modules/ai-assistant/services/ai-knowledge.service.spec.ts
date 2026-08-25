@@ -153,6 +153,14 @@ describe('AiKnowledgeService', () => {
       expect(queueService.enqueue).toHaveBeenCalled();
     });
 
+    it('enqueues with a jobId different from create()\'s stable one, since BullMQ silently drops add() for a jobId that already completed — reusing it here would make reingest a permanent no-op after the first successful ingestion', async () => {
+      documentRepository.findOne.mockResolvedValue(buildDocument());
+      await service.reingest('doc-1', 'company-a');
+      const [, , , options] = queueService.enqueue.mock.calls[0];
+      expect(options?.jobId).not.toBe('ai-ingest-doc-1');
+      expect(options?.jobId).toMatch(/^ai-ingest-doc-1-\d+$/);
+    });
+
     it('rejects reingest for a document in a different company', async () => {
       documentRepository.findOne.mockResolvedValue(
         buildDocument({ companyId: 'company-b' }),

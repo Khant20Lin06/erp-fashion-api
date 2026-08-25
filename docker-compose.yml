@@ -16,6 +16,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       KAFKA_BROKERS: kafka:9092
+      QDRANT_URL: http://qdrant:6333
     volumes:
       - .:/usr/src/app
       - api_node_modules:/usr/src/app/node_modules
@@ -25,6 +26,8 @@ services:
       redis:
         condition: service_healthy
       kafka:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
     networks:
       - fashion-erp-network
@@ -78,6 +81,27 @@ services:
     networks:
       - fashion-erp-network
 
+  # AI Assistant vector search (Phase 19.1 follow-up) — MySQL 8.0 has no
+  # native vector type/ANN index, so real semantic search over
+  # ai_knowledge_chunks embeddings needs a dedicated vector store. Qdrant
+  # is the source of truth for similarity search only; MySQL stays the
+  # source of truth for chunk content and tenant/company scoping.
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_HOST_PORT:-6333}:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - fashion-erp-network
+
   # Phase 18 — Kafka in KRaft mode (no ZooKeeper). Single-broker,
   # single-node controller+broker combo, sufficient for local dev/test.
   # apache/kafka is the official Apache Kafka project image (published
@@ -122,4 +146,5 @@ volumes:
   mysql_data:
   redis_data:
   kafka_data:
+  qdrant_data:
   api_node_modules:

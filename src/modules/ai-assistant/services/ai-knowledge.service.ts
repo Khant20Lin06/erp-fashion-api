@@ -128,7 +128,13 @@ export class AiKnowledgeService {
     document.status = AiKnowledgeStatus.Pending;
     document.errorMessage = null;
     const saved = await this.documentRepository.save(document);
-    await this.enqueueIngestion(saved.id);
+    // A fresh, unique jobId per attempt — BullMQ silently drops add() for a
+    // jobId that already exists in ANY state, including "completed", so
+    // reusing create()'s stable `ai-ingest-{documentId}` id here (as this
+    // used to) meant every re-ingest after the very first successful
+    // ingestion was a no-op: the document flipped to PENDING and then sat
+    // there forever, since no job was actually enqueued to process it.
+    await this.enqueueIngestion(saved.id, `${saved.id}-${Date.now()}`);
     return saved;
   }
 
@@ -137,12 +143,20 @@ export class AiKnowledgeService {
     await this.documentRepository.softRemove(document);
   }
 
-  private async enqueueIngestion(documentId: string): Promise<void> {
+  /** `dedupeKey` defaults to the documentId itself — stable, so a
+   * double-submit of the same brand-new document (create()'s only caller)
+   * still collapses to one job. reingest() passes a unique key instead
+   * since, unlike creation, re-running ingestion for the same document is
+   * an intentionally repeatable action. */
+  private async enqueueIngestion(
+    documentId: string,
+    dedupeKey: string = documentId,
+  ): Promise<void> {
     await this.queueService.enqueue<AiIngestKnowledgeJobData>(
       QueueNames.AI_KNOWLEDGE_INGESTION,
       AI_INGEST_KNOWLEDGE_JOB,
       { documentId },
-      { jobId: `ai-ingest-${documentId}` },
+      { jobId: `ai-ingest-${dedupeKey}` },
     );
   }
 }

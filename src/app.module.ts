@@ -9,6 +9,7 @@ import outboxConfig from './config/outbox.config';
 import redisConfig from './config/redis.config';
 import queueConfig from './config/queue.config';
 import aiConfig from './config/ai.config';
+import qdrantConfig from './config/qdrant.config';
 import { envValidationSchema } from './config/env.validation';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { HealthModule } from './health/health.module';
@@ -66,6 +67,7 @@ const databaseImport = isOpenApiGenerationMode()
         redisConfig,
         queueConfig,
         aiConfig,
+        qdrantConfig,
       ],
       validationSchema: envValidationSchema,
       validationOptions: {

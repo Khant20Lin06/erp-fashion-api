@@ -8,6 +8,7 @@ import { AiKnowledgeDocument } from '../entities/ai-knowledge-document.entity';
 import { AiKnowledgeChunk } from '../entities/ai-knowledge-chunk.entity';
 import { AiKnowledgeStatus } from '../entities/ai-knowledge-status.enum';
 import type { LlmProvider } from '../providers/llm-provider.interface';
+import type { QdrantVectorStoreService } from '../services/qdrant-vector-store.service';
 
 describe('KnowledgeIngestionWorker', () => {
   let worker: KnowledgeIngestionWorker;
@@ -18,6 +19,7 @@ describe('KnowledgeIngestionWorker', () => {
     Pick<Repository<AiKnowledgeChunk>, 'delete' | 'create' | 'save'>
   >;
   let llmProvider: jest.Mocked<Pick<LlmProvider, 'embed'>>;
+  let vectorStore: jest.Mocked<Pick<QdrantVectorStoreService, 'upsertDocumentChunks'>>;
 
   // With chunkSize=1000/overlap=150 (see configService mock below), content
   // this short always produces exactly ONE chunk — keeps embeddings-count
@@ -48,10 +50,20 @@ describe('KnowledgeIngestionWorker', () => {
     chunkRepository = {
       delete: jest.fn().mockResolvedValue({ affected: 0 }),
       create: jest.fn((data: unknown) => data as AiKnowledgeChunk) as never,
-      save: jest.fn().mockResolvedValue(undefined),
+      // Real save() returns the persisted entities (with generated ids) —
+      // the worker needs those ids to upsert into Qdrant, so the mock must
+      // echo back what was passed in rather than resolving undefined.
+      save: jest.fn((entities: AiKnowledgeChunk[]) =>
+        Promise.resolve(
+          entities.map((entity, index) => ({ ...entity, id: `chunk-${index}` })),
+        ),
+      ) as never,
     };
     llmProvider = {
       embed: jest.fn(),
+    };
+    vectorStore = {
+      upsertDocumentChunks: jest.fn().mockResolvedValue(undefined),
     };
 
     const configService: Pick<ConfigService, 'get'> = {
@@ -68,6 +80,7 @@ describe('KnowledgeIngestionWorker', () => {
       documentRepository as unknown as Repository<AiKnowledgeDocument>,
       chunkRepository as unknown as Repository<AiKnowledgeChunk>,
       llmProvider as unknown as LlmProvider,
+      vectorStore as unknown as QdrantVectorStoreService,
     );
   });
 
@@ -119,6 +132,29 @@ describe('KnowledgeIngestionWorker', () => {
         status: AiKnowledgeStatus.Ready,
         embeddingModel: 'test-embedding-model',
       }),
+    );
+  });
+
+  it('upserts the saved chunks (with their real generated ids) into the vector store on success', async () => {
+    documentRepository.findOne.mockResolvedValue(buildDocument());
+    llmProvider.embed.mockResolvedValue({
+      embeddings: [[0.1, 0.2]],
+      model: 'test-embedding-model',
+      usage: null,
+    });
+
+    await asTestable(worker).process(buildJob('doc-1'));
+
+    expect(vectorStore.upsertDocumentChunks).toHaveBeenCalledWith(
+      'doc-1',
+      [
+        expect.objectContaining({
+          chunkId: 'chunk-0',
+          documentId: 'doc-1',
+          companyId: 'company-a',
+          embedding: [0.1, 0.2],
+        }),
+      ],
     );
   });
 
