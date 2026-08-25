@@ -7,6 +7,14 @@ export interface AiConfig {
   apiKey: string | undefined;
   chatModel: string | undefined;
   embeddingModel: string | undefined;
+  /** Separate base URL/key for embeddings, since a chat provider often
+   * doesn't serve embeddings at all (OpenRouter has no /embeddings
+   * endpoint) — defaults to baseUrl/apiKey for a provider that does serve
+   * both (e.g. talking to OpenAI directly for everything), but must be
+   * set independently to mix providers (OpenRouter for chat, OpenAI
+   * direct for embeddings). */
+  embeddingBaseUrl: string | undefined;
+  embeddingApiKey: string | undefined;
   /** Optional local LLM tier (Ollama-compatible). Unset by default —
    * the ERP must run identically whether or not this is configured. */
   ollamaBaseUrl: string | undefined;
@@ -43,6 +51,8 @@ export default registerAs('ai', (): AiConfig => ({
   apiKey: process.env.AI_API_KEY,
   chatModel: process.env.AI_CHAT_MODEL,
   embeddingModel: process.env.AI_EMBEDDING_MODEL,
+  embeddingBaseUrl: process.env.AI_EMBEDDING_BASE_URL ?? process.env.AI_BASE_URL,
+  embeddingApiKey: process.env.AI_EMBEDDING_API_KEY ?? process.env.AI_API_KEY,
   ollamaBaseUrl: process.env.OLLAMA_BASE_URL,
   ollamaChatModel: process.env.OLLAMA_CHAT_MODEL,
   ollamaEmbeddingModel: process.env.OLLAMA_EMBEDDING_MODEL,

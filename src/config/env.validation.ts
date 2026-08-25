@@ -45,21 +45,28 @@ export const envValidationSchema = Joi.object({
   // proxy — see app.config.ts's own docblock for the full rationale.
   TRUST_PROXY: Joi.string().allow('').default(''),
 
-  DATABASE_URL: Joi.string().uri().optional(),
+  DATABASE_URL: Joi.string().uri().allow('').optional(),
   DB_HOST: Joi.string().default('localhost'),
   DB_PORT: Joi.number().port().default(3306),
+  // `is: Joi.string().min(1)` — not `Joi.exist()` — deliberately: an empty
+  // DATABASE_URL="" is present-but-useless, and Joi.exist() alone treats
+  // that as "provided", which would make DB_USERNAME/PASSWORD/DATABASE all
+  // optional even though there is no real connection string to fall back
+  // on. Reproduced live: a fresh .env.example copy ships DATABASE_URL=
+  // (blank) alongside real DB_USERNAME/DB_PASSWORD/DB_DATABASE values —
+  // those must still be required in that case, not silently waived.
   DB_USERNAME: Joi.string().when('DATABASE_URL', {
-    is: Joi.exist(),
+    is: Joi.string().min(1),
     then: Joi.optional(),
     otherwise: Joi.required(),
   }),
   DB_PASSWORD: Joi.string().when('DATABASE_URL', {
-    is: Joi.exist(),
+    is: Joi.string().min(1),
     then: Joi.optional(),
     otherwise: Joi.required(),
   }),
   DB_DATABASE: Joi.string().when('DATABASE_URL', {
-    is: Joi.exist(),
+    is: Joi.string().min(1),
     then: Joi.optional(),
     otherwise: Joi.required(),
   }),
@@ -105,7 +112,7 @@ export const envValidationSchema = Joi.object({
   // the BullMQ connection in Phase 20). REDIS_PASSWORD is optional since
   // the local docker-compose redis service runs without auth; REDIS_DB
   // defaults to logical DB 0.
-  REDIS_URL: Joi.string().uri().optional(),
+  REDIS_URL: Joi.string().uri().allow('').optional(),
   REDIS_HOST: Joi.string().default('localhost'),
   REDIS_PORT: Joi.number().port().default(6379),
   REDIS_PASSWORD: Joi.string().allow('').optional(),
@@ -128,17 +135,30 @@ export const envValidationSchema = Joi.object({
   // never assume a specific provider.
   AI_ENABLED: Joi.boolean().default(false),
   AI_PROVIDER: Joi.string().default('openai-compatible'),
-  AI_BASE_URL: Joi.string().uri().optional(),
-  AI_API_KEY: Joi.string().optional(),
-  AI_CHAT_MODEL: Joi.string().optional(),
-  AI_EMBEDDING_MODEL: Joi.string().optional(),
+  // .allow('') on every one of these: .env.example ships them all blank
+  // (never a default provider assumed), and Joi's .optional() alone
+  // rejects an explicit empty string — only an ABSENT key, not a blank
+  // one. Without .allow(''), copying .env.example verbatim crashes
+  // startup with "is not allowed to be empty" (reproduced live twice this
+  // project — see AI_EMBEDDING_MODEL's original single-var version of
+  // this same bug, now generalized to every optional AI/Ollama var here).
+  AI_BASE_URL: Joi.string().uri().allow('').optional(),
+  AI_API_KEY: Joi.string().allow('').optional(),
+  AI_CHAT_MODEL: Joi.string().allow('').optional(),
+  AI_EMBEDDING_MODEL: Joi.string().allow('').optional(),
+  // A chat provider often doesn't serve embeddings at all (OpenRouter has
+  // no /embeddings endpoint) — these default to AI_BASE_URL/AI_API_KEY
+  // when unset, but let a deployment point embeddings at a different
+  // provider entirely (e.g. OpenAI direct) while chat stays on OpenRouter.
+  AI_EMBEDDING_BASE_URL: Joi.string().uri().allow('').optional(),
+  AI_EMBEDDING_API_KEY: Joi.string().allow('').optional(),
   // Optional local LLM tier (Phase 19.1 — HybridLlmProvider), an
   // Ollama-compatible HTTP server. No API key concept for Ollama itself.
   // Entirely optional — the app must start and AI chat must still work
   // (via the deterministic fallback) if these are unset or unreachable.
-  OLLAMA_BASE_URL: Joi.string().uri().optional(),
-  OLLAMA_CHAT_MODEL: Joi.string().optional(),
-  OLLAMA_EMBEDDING_MODEL: Joi.string().optional(),
+  OLLAMA_BASE_URL: Joi.string().uri().allow('').optional(),
+  OLLAMA_CHAT_MODEL: Joi.string().allow('').optional(),
+  OLLAMA_EMBEDDING_MODEL: Joi.string().allow('').optional(),
   // Whether HybridLlmProvider may fall through to the API-key-free
   // deterministic LocalFallbackProvider when remote/local LLM tiers are
   // unavailable. True by default per Phase 19.1's hard requirement that
@@ -159,6 +179,12 @@ export const envValidationSchema = Joi.object({
     .min(1)
     .max(20)
     .default(2),
+  // Vector search for AI Assistant RAG (Phase 19.1 follow-up). Unset is
+  // valid — AiRagService returns no retrieved chunks rather than throwing,
+  // same degrade-gracefully convention as every other optional AI tier.
+  QDRANT_URL: Joi.string().uri().allow('').optional(),
+  QDRANT_COLLECTION: Joi.string().optional(),
+  QDRANT_REQUEST_TIMEOUT_MS: Joi.number().integer().min(1000).default(10000),
 }).custom((rawValue, helpers) => {
   const value = rawValue as ValidatedEnvironment;
   if (
