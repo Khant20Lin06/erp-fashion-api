@@ -1,4 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { AiConfig } from '../../../config/ai.config';
 import { AiConversationService } from './ai-conversation.service';
 import { AiToolExecutorService } from './ai-tool-executor.service';
 import { AiRagService, RagRetrievedChunk } from './ai-rag.service';
@@ -9,6 +11,7 @@ import {
   AiChatMode,
   AiChatRequestDto,
   AiChatSourceDto,
+  AiModelInfoDto,
 } from '../dto/ai-chat.dto';
 import { AuthenticatedUser } from '../../auth/types/authenticated-user';
 import { AppException } from '../../../core/errors/app.exception';
@@ -23,6 +26,17 @@ import type {
 } from '../providers/llm-provider.interface';
 
 const MAX_TOOL_ROUNDS = 3;
+/** Reproduced live: a tool result with ~1600+ rows (get_inventory_stock_summary
+ * with no warehouse filter) serializes to ~270KB of JSON, which OpenRouter
+ * rejected outright with HTTP 400 — silently dropping the remote tier down
+ * to the local deterministic fallback for the entire reply, not just this
+ * one tool result. Every tool result array gets capped before being sent
+ * to the LLM as a `tool` message, independent of which provider tier ends
+ * up answering (this cap lives in the shared orchestration loop, not any
+ * one provider). MAX_TOOL_RESULT_ARRAY_ROWS mirrors LocalFallbackProvider's
+ * own 25-row convention for consistency across the codebase's two
+ * independent truncation points, not because 25 is otherwise special. */
+const MAX_TOOL_RESULT_ARRAY_ROWS = 25;
 
 /**
  * The orchestrator (Phase 19 §9). Fixed sequence:
@@ -48,13 +62,68 @@ const MAX_TOOL_ROUNDS = 3;
 @Injectable()
 export class AiChatService {
   private readonly logger = new Logger(AiChatService.name);
+  private readonly aiConfig: AiConfig;
 
   constructor(
     private readonly conversationService: AiConversationService,
     private readonly toolExecutorService: AiToolExecutorService,
     private readonly ragService: AiRagService,
     @Inject(LLM_PROVIDER) private readonly llmProvider: LlmProvider,
-  ) {}
+    configService: ConfigService,
+  ) {
+    this.aiConfig = configService.get<AiConfig>('ai')!;
+  }
+
+  /** GET /ai/chat/models. Backed by the live provider catalog
+   * (HybridLlmProvider.listModels() -> remote tier's real /models
+   * endpoint, e.g. OpenRouter's full list with real pricing) — never a
+   * hand-maintained list, since a provider's catalog changes independently
+   * of this codebase and a stale hardcoded list would silently drift from
+   * what the provider will actually accept. AI_CHAT_MODEL is always
+   * included (synthesized with null pricing if the catalog fetch didn't
+   * happen to return it) since it's what a request with no `model` field
+   * falls back to. */
+  async listAvailableModels(): Promise<{
+    models: AiModelInfoDto[];
+    defaultModel: string | null;
+  }> {
+    const defaultModel = this.aiConfig.chatModel ?? null;
+    const catalog = this.llmProvider.listModels
+      ? await this.llmProvider.listModels()
+      : [];
+
+    const models = catalog.map((m) => ({
+      id: m.id,
+      name: m.name,
+      promptPricePerMillionTokens: m.promptPricePerMillionTokens,
+      completionPricePerMillionTokens: m.completionPricePerMillionTokens,
+    }));
+
+    if (defaultModel && !models.some((m) => m.id === defaultModel)) {
+      models.unshift({
+        id: defaultModel,
+        name: defaultModel,
+        promptPricePerMillionTokens: null,
+        completionPricePerMillionTokens: null,
+      });
+    }
+
+    return { models, defaultModel };
+  }
+
+  /** Only ever forwards a model that appears in the live provider catalog
+   * (or is the configured AI_CHAT_MODEL itself) — an unrecognized value is
+   * silently ignored rather than rejected, since falling back to the
+   * configured default is a safe, cheap degradation and this is a UX
+   * convenience, not a security boundary that needs a hard error. */
+  private async resolveRequestedModel(
+    requested: string | undefined,
+  ): Promise<string | undefined> {
+    if (!requested) return undefined;
+    if (requested === this.aiConfig.chatModel) return requested;
+    const { models } = await this.listAvailableModels();
+    return models.some((m) => m.id === requested) ? requested : undefined;
+  }
 
   async chat(
     user: AuthenticatedUser,
@@ -101,12 +170,14 @@ export class AiChatService {
     let assistantMessage: AiMessage;
     let mode: AiChatMode;
     try {
+      const requestedModel = await this.resolveRequestedModel(dto.model);
       const result = await this.runChatWithTools(
         user,
         companyId,
         dto.branchId,
         messages,
         availableTools,
+        requestedModel,
       );
 
       const parsedModel = this.parseModelTag(result.model);
@@ -227,6 +298,7 @@ export class AiChatService {
     branchId: string | undefined,
     messages: LlmChatMessage[],
     availableTools: LlmChatOptions['tools'],
+    requestedModel: string | undefined,
   ): Promise<{
     content: string | null;
     model: string;
@@ -238,6 +310,7 @@ export class AiChatService {
       const result = await this.llmProvider.chat({
         messages: conversationMessages,
         tools: availableTools,
+        model: requestedModel,
       });
 
       if (!result.toolCalls || result.toolCalls.length === 0) {
@@ -263,7 +336,7 @@ export class AiChatService {
         );
         conversationMessages.push({
           role: 'tool',
-          content: JSON.stringify(toolResult),
+          content: JSON.stringify(this.truncateToolResult(toolResult)),
           toolCallId: toolCall.id,
           name: toolCall.name,
         });
@@ -302,5 +375,33 @@ export class AiChatService {
       companyId,
       branchId,
     );
+  }
+
+  /** Caps a real, unmodified tool result's array length before it's sent
+   * to the LLM — never fabricates or drops individual field values, only
+   * limits how many rows of an array are included, with an honest count
+   * disclosure so the model (and, transitively, the user) knows the data
+   * was truncated rather than being the complete set. AiToolExecutorService's
+   * result shape is always `{ toolName, success, result?, error? }`
+   * (AiToolExecutionResult) — only `result` is ever an array worth capping;
+   * toolName/success/error are always small, fixed-shape fields. */
+  private truncateToolResult(toolResult: unknown): unknown {
+    if (
+      typeof toolResult !== 'object' ||
+      toolResult === null ||
+      !('result' in toolResult)
+    ) {
+      return toolResult;
+    }
+    const { result, ...rest } = toolResult as { result: unknown };
+    if (!Array.isArray(result) || result.length <= MAX_TOOL_RESULT_ARRAY_ROWS) {
+      return toolResult;
+    }
+    return {
+      ...rest,
+      result: result.slice(0, MAX_TOOL_RESULT_ARRAY_ROWS),
+      truncated: true,
+      truncationNote: `Showing the first ${MAX_TOOL_RESULT_ARRAY_ROWS} of ${result.length} rows. Ask a more specific question (e.g. a single warehouse or product) to see the rest.`,
+    };
   }
 }

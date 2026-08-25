@@ -8,6 +8,7 @@ import {
   LlmChatOptions,
   LlmChatResult,
   LlmEmbeddingResult,
+  LlmModelInfo,
   LlmProvider,
 } from './llm-provider.interface';
 
@@ -84,11 +85,34 @@ export class HybridLlmProvider implements LlmProvider {
     return result;
   }
 
+  /** The model picker only ever means "which remote model" — the local
+   * LLM/fallback tiers have no catalog concept, so this talks to the
+   * remote tier directly rather than going through tryInPriorityOrder.
+   * Returns [] rather than throwing when the remote tier isn't
+   * configured/reachable, same as OpenAiCompatibleProvider.listModels()
+   * itself — an empty picker degrades to "no override offered", never a
+   * chat-blocking error. */
+  async listModels(): Promise<LlmModelInfo[]> {
+    if (!this.isRemoteConfigured() || !this.remoteProvider.listModels) {
+      return [];
+    }
+    try {
+      return await this.remoteProvider.listModels();
+    } catch (error) {
+      this.logger.warn(`Model listing failed: ${(error as Error).message}`);
+      return [];
+    }
+  }
+
   private async tryInPriorityOrder<T>(
     call: (provider: LlmProvider) => Promise<T>,
     operation: 'chat' | 'embed',
   ): Promise<{ result: T; tierPrefix: 'remote' | 'local_llm' | undefined }> {
-    if (this.isRemoteConfigured()) {
+    const remoteConfigured =
+      operation === 'embed'
+        ? this.isRemoteEmbeddingConfigured()
+        : this.isRemoteConfigured();
+    if (remoteConfigured) {
       try {
         return {
           result: await call(this.remoteProvider),
@@ -143,6 +167,19 @@ export class HybridLlmProvider implements LlmProvider {
       this.config.baseUrl &&
       this.config.apiKey &&
       this.config.chatModel
+    );
+  }
+
+  /** Deliberately independent of isRemoteConfigured() — a deployment can
+   * have chat and embeddings pointed at entirely different providers
+   * (e.g. OpenRouter for chat, since it has no /embeddings endpoint, plus
+   * OpenAI direct for embeddings), so neither tier's availability should
+   * gate the other's. */
+  private isRemoteEmbeddingConfigured(): boolean {
+    return !!(
+      this.config.embeddingBaseUrl &&
+      this.config.embeddingApiKey &&
+      this.config.embeddingModel
     );
   }
 

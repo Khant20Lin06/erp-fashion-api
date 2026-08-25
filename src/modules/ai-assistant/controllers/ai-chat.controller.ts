@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../rbac/guards/permission.guard';
@@ -7,7 +7,11 @@ import { CurrentUser } from '../../../shared/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../auth/types/authenticated-user';
 import { DataScopeService } from '../../rbac/services/data-scope.service';
 import { resolveRequestCompanyId } from '../../master-data/utils/resolve-request-company-id';
-import { AiChatRequestDto, AiChatResponseDto } from '../dto/ai-chat.dto';
+import { AiChatRequestDto } from '../dto/ai-chat.dto';
+import type {
+  AiChatResponseDto,
+  AiModelsResponseDto,
+} from '../dto/ai-chat.dto';
 import {
   toAiConversationResponseDto,
   toAiMessageResponseDto,
@@ -24,6 +28,12 @@ export class AiChatController {
     private readonly aiChatService: AiChatService,
     private readonly dataScopeService: DataScopeService,
   ) {}
+
+  @Get('models')
+  @RequirePermission('ai_assistant.chat')
+  async listModels(): Promise<AiModelsResponseDto> {
+    return this.aiChatService.listAvailableModels();
+  }
 
   @Post()
   @RequirePermission('ai_assistant.chat')

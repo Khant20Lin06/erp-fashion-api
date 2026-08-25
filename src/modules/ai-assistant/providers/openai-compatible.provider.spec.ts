@@ -14,6 +14,12 @@ describe('OpenAiCompatibleProvider', () => {
       apiKey: 'test-key',
       chatModel: 'test-chat-model',
       embeddingModel: 'test-embedding-model',
+      // Mirrors ai.config.ts's real default (embeddingBaseUrl/embeddingApiKey
+      // fall back to baseUrl/apiKey when unset) — this hand-built fixture
+      // doesn't go through the actual config factory, so it must replicate
+      // that default explicitly rather than silently omitting it.
+      embeddingBaseUrl: 'https://api.example.com/v1',
+      embeddingApiKey: 'test-key',
       requestTimeoutMs: 5000,
       ...overrides,
     }),
@@ -182,6 +188,47 @@ describe('OpenAiCompatibleProvider', () => {
     it('throws InternalError when AI_EMBEDDING_MODEL is not configured', async () => {
       provider = new OpenAiCompatibleProvider(
         buildConfigService({ embeddingModel: undefined }) as ConfigService,
+      );
+      await expect(provider.embed(['a'])).rejects.toMatchObject({
+        errorCode: ErrorCode.InternalError,
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('requests against embeddingBaseUrl/embeddingApiKey, independently of chat baseUrl/apiKey', async () => {
+      provider = new OpenAiCompatibleProvider(
+        buildConfigService({
+          baseUrl: 'https://openrouter.example/api/v1',
+          apiKey: 'chat-key',
+          embeddingBaseUrl: 'https://openai.example/v1',
+          embeddingApiKey: 'embedding-key',
+        }) as ConfigService,
+      );
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            model: 'test-embedding-model',
+            data: [{ embedding: [1, 1], index: 0 }],
+          }),
+      });
+
+      await provider.embed(['a']);
+
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe('https://openai.example/v1/embeddings');
+      const headers = init.headers as Record<string, string>;
+      expect(headers.Authorization).toBe('Bearer embedding-key');
+    });
+
+    it('throws InternalError — never silently falling back to chat credentials — when only chat is configured and embeddings are not', async () => {
+      provider = new OpenAiCompatibleProvider(
+        buildConfigService({
+          embeddingBaseUrl: undefined,
+          embeddingApiKey: undefined,
+          embeddingModel: undefined,
+        }) as ConfigService,
       );
       await expect(provider.embed(['a'])).rejects.toMatchObject({
         errorCode: ErrorCode.InternalError,
