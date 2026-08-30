@@ -40,6 +40,12 @@ export interface SalesByProductRow {
   revenue: string;
 }
 
+export interface SalesCustomerSummary {
+  newCustomers: number;
+  returningCustomers: number;
+  averageCustomerSpend: string;
+}
+
 /**
  * New Phase 22 report — Sales (summary/by-date/by-customer/by-branch), from
  * real Sale data. Every query filters to CONFIRMED sales only (DRAFT/
@@ -203,39 +209,100 @@ export class SalesReportsService {
     }));
   }
 
+  async customerSummary(
+    companyId: string,
+    query: SalesReportQueryDto & { allowedBranchIds?: string[] | null },
+  ): Promise<SalesCustomerSummary> {
+    const periodRows = await this.baseQuery(companyId, query)
+      .innerJoin('sale.customer', 'customer')
+      .select('customer.id', 'customerId')
+      .addSelect('COUNT(sale.id)', 'saleCount')
+      .addSelect('COALESCE(SUM(sale.grandTotal), 0)', 'grandTotal')
+      .groupBy('customer.id')
+      .getRawMany<{
+        customerId: string;
+        saleCount: string;
+        grandTotal: string;
+      }>();
+
+    if (periodRows.length === 0) {
+      return {
+        newCustomers: 0,
+        returningCustomers: 0,
+        averageCustomerSpend: '0.00',
+      };
+    }
+
+    const lifetimeRows = await this.baseQuery(companyId, {
+      ...query,
+      fromDate: undefined,
+      toDate: undefined,
+    })
+      .innerJoin('sale.customer', 'customer')
+      .select('customer.id', 'customerId')
+      .addSelect('MIN(sale.transactionDate)', 'firstSaleDate')
+      .groupBy('customer.id')
+      .getRawMany<{
+        customerId: string;
+        firstSaleDate: string;
+      }>();
+
+    const firstSaleByCustomer = new Map(
+      lifetimeRows.map((row) => [row.customerId, row.firstSaleDate]),
+    );
+    const fromTime = query.fromDate
+      ? new Date(query.fromDate).getTime()
+      : Number.NEGATIVE_INFINITY;
+    const toTime = query.toDate
+      ? new Date(query.toDate).getTime()
+      : Number.POSITIVE_INFINITY;
+    const hasDateWindow = Boolean(query.fromDate || query.toDate);
+
+    let newCustomers = 0;
+    let returningCustomers = 0;
+    let totalSpend = 0;
+
+    for (const row of periodRows) {
+      totalSpend += Number(row.grandTotal ?? 0);
+      const firstSaleDate = firstSaleByCustomer.get(row.customerId);
+      const firstSaleTime = firstSaleDate
+        ? new Date(firstSaleDate).getTime()
+        : Number.NaN;
+      const isNewCustomer =
+        hasDateWindow && !Number.isNaN(firstSaleTime)
+          ? firstSaleTime >= fromTime && firstSaleTime <= toTime
+          : Number(row.saleCount ?? 0) <= 1;
+
+      if (isNewCustomer) {
+        newCustomers += 1;
+      } else {
+        returningCustomers += 1;
+      }
+    }
+
+    return {
+      newCustomers,
+      returningCustomers,
+      averageCustomerSpend: (totalSpend / periodRows.length).toFixed(2),
+    };
+  }
+
   async byProduct(
     companyId: string,
     query: SalesReportQueryDto & { allowedBranchIds?: string[] | null },
   ): Promise<SalesByProductRow[]> {
-    const qb = this.saleRepository
-      .createQueryBuilder('sale')
-      .innerJoin('sale.items', 'item')
-      .where('sale.companyId = :companyId', { companyId })
-      .andWhere('sale.status = :status', { status: SaleStatus.Confirmed });
-
-    if (query.branchId) {
-      qb.andWhere('sale.branchId = :branchId', { branchId: query.branchId });
-    } else if (query.allowedBranchIds?.length) {
-      qb.andWhere('sale.branchId IN (:...allowedBranchIds)', {
-        allowedBranchIds: query.allowedBranchIds,
-      });
-    }
-    if (query.fromDate) {
-      qb.andWhere('sale.transactionDate >= :fromDate', {
-        fromDate: query.fromDate,
-      });
-    }
-    if (query.toDate) {
-      qb.andWhere('sale.transactionDate <= :toDate', { toDate: query.toDate });
-    }
+    const qb = this.baseQuery(companyId, query).innerJoin('sale.items', 'item');
+    const sortBy = query.sortBy === 'unitsSold' ? 'unitsSold' : 'revenue';
+    const sortDirection = query.sortDirection === 'ASC' ? 'ASC' : 'DESC';
+    const limit = query.limit ?? 5;
 
     const rows = await qb
       .select('item.productNameSnapshot', 'productName')
       .addSelect('SUM(item.quantity)', 'unitsSold')
       .addSelect('COALESCE(SUM(item.lineTotal), 0)', 'revenue')
       .groupBy('item.productNameSnapshot')
-      .orderBy('revenue', 'DESC')
-      .limit(5)
+      .orderBy(sortBy, sortDirection)
+      .limit(limit)
       .getRawMany<{
         productName: string;
         unitsSold: string;

@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, FindOptionsWhere, Repository } from 'typeorm';
 import { SaleReturn } from '../entities/sale-return.entity';
 import { SaleReturnItem } from '../entities/sale-return-item.entity';
 import { SaleReturnStatus } from '../entities/sale-return-status.enum';
@@ -22,6 +22,8 @@ import { LoyaltyPointTransaction } from '../../loyalty/entities/loyalty-point-tr
 import { TransactionService } from '../../../core/transaction/transaction.service';
 import { AppException } from '../../../core/errors/app.exception';
 import { ErrorCode } from '../../../core/errors/error-codes';
+import { Warehouse } from '../../organization/entities/warehouse.entity';
+import { WarehouseStatus } from '../../organization/entities/warehouse-status.enum';
 import {
   DEFAULT_LIMIT,
   DEFAULT_PAGE,
@@ -52,39 +54,106 @@ export class SaleReturnsService {
     const page = query.page ?? DEFAULT_PAGE;
     const limit = query.limit ?? DEFAULT_LIMIT;
 
-    const qb = this.saleReturnRepository
-      .createQueryBuilder('saleReturn')
-      .where('saleReturn.companyId = :companyId', { companyId });
+    const where: FindOptionsWhere<SaleReturn> = {
+      companyId,
+      ...(query.saleId ? { saleId: query.saleId } : {}),
+      ...(query.customerId ? { customerId: query.customerId } : {}),
+      ...(query.status ? { status: query.status } : {}),
+    };
 
-    if (query.saleId) {
-      qb.andWhere('saleReturn.saleId = :saleId', { saleId: query.saleId });
-    }
-    if (query.customerId) {
-      qb.andWhere('saleReturn.customerId = :customerId', {
-        customerId: query.customerId,
-      });
-    }
-    if (query.status) {
-      qb.andWhere('saleReturn.status = :status', { status: query.status });
-    }
-
-    qb.orderBy('saleReturn.createdAt', 'DESC')
-      .skip((page - 1) * limit)
-      .take(limit);
-
-    const [data, total] = await qb.getManyAndCount();
+    const [data, total] = await this.saleReturnRepository.findAndCount({
+      where,
+      relations: {
+        items: true,
+        sale: true,
+        customer: true,
+      },
+      order: { createdAt: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
     return { data, meta: { page, limit, total } };
   }
 
   async findByIdInCompany(id: string, companyId: string): Promise<SaleReturn> {
     const entity = await this.saleReturnRepository.findOne({
       where: { id, companyId },
-      relations: { items: true },
+      relations: { items: true, sale: true, customer: true },
     });
     if (!entity) {
       throw new AppException(ErrorCode.NotFound, 'Sale return not found');
     }
     return entity;
+  }
+
+  private loadReturnWithRelations(
+    manager: EntityManager,
+    id: string,
+    companyId: string,
+  ): Promise<SaleReturn | null> {
+    return manager.findOne(SaleReturn, {
+      where: { id, companyId },
+      relations: { items: true, sale: true, customer: true },
+    });
+  }
+
+  private async hydrateReturnOrFallback(
+    manager: EntityManager,
+    id: string,
+    companyId: string,
+    fallback: SaleReturn,
+  ): Promise<SaleReturn> {
+    return (
+      (await this.loadReturnWithRelations(manager, id, companyId)) ?? fallback
+    );
+  }
+
+  /**
+   * Legacy-sale recovery path: older CONFIRMED sales may lack warehouseId
+   * even though return confirmation now needs a concrete warehouse to restock
+   * into. To avoid inventing ambiguous stock history, inference is allowed
+   * only when the sale has a branchId and that branch currently has exactly
+   * one ACTIVE warehouse in the same company. In that safe case we persist
+   * the inferred warehouseId back onto the Sale so future confirmations no
+   * longer depend on this fallback.
+   */
+  private async resolveWarehouseIdForReturnConfirmation(
+    manager: EntityManager,
+    sale: Sale,
+    companyId: string,
+  ): Promise<string> {
+    if (sale.warehouseId) {
+      return sale.warehouseId;
+    }
+
+    if (!sale.branchId) {
+      throw new AppException(
+        ErrorCode.ValidationError,
+        'Sale.warehouseId is missing and the legacy sale has no branchId, so the return cannot be confirmed automatically',
+      );
+    }
+
+    const activeWarehouses = await manager.find(Warehouse, {
+      where: {
+        companyId,
+        branchId: sale.branchId,
+        status: WarehouseStatus.Active,
+      },
+    });
+
+    if (activeWarehouses.length !== 1) {
+      throw new AppException(
+        ErrorCode.ValidationError,
+        activeWarehouses.length === 0
+          ? 'Sale.warehouseId is missing and this branch has no active warehouse to restock into'
+          : 'Sale.warehouseId is missing and this branch has multiple active warehouses; assign the original sale warehouse before confirming the return',
+      );
+    }
+
+    const inferredWarehouseId = activeWarehouses[0].id;
+    await manager.update(Sale, sale.id, { warehouseId: inferredWarehouseId });
+    sale.warehouseId = inferredWarehouseId;
+    return inferredWarehouseId;
   }
 
   /**
@@ -264,7 +333,12 @@ export class SaleReturnsService {
       savedReturn.items = await manager.find(SaleReturnItem, {
         where: { saleReturnId: savedReturn.id },
       });
-      return savedReturn;
+      return await this.hydrateReturnOrFallback(
+        manager,
+        savedReturn.id,
+        companyId,
+        savedReturn,
+      );
     });
   }
 
@@ -307,13 +381,11 @@ export class SaleReturnsService {
       const sale = await manager.findOneOrFail(Sale, {
         where: { id: saleReturn.saleId },
       });
-      if (!sale.warehouseId) {
-        throw new AppException(
-          ErrorCode.ValidationError,
-          'Sale.warehouseId is required to confirm a return (stock must be restocked to a specific warehouse)',
-        );
-      }
-      const warehouseId = sale.warehouseId;
+      const warehouseId = await this.resolveWarehouseIdForReturnConfirmation(
+        manager,
+        sale,
+        companyId,
+      );
 
       const items = await manager.find(SaleReturnItem, {
         where: { saleReturnId: saleReturn.id },
@@ -398,7 +470,13 @@ export class SaleReturnsService {
       saleReturn.status = SaleReturnStatus.Confirmed;
       saleReturn.confirmedBy = userId;
       saleReturn.confirmedAt = new Date();
-      return manager.save(SaleReturn, saleReturn);
+      await manager.save(SaleReturn, saleReturn);
+      return await this.hydrateReturnOrFallback(
+        manager,
+        saleReturn.id,
+        companyId,
+        saleReturn,
+      );
     });
   }
 
@@ -419,7 +497,13 @@ export class SaleReturnsService {
         );
       }
       saleReturn.status = SaleReturnStatus.Cancelled;
-      return manager.save(SaleReturn, saleReturn);
+      await manager.save(SaleReturn, saleReturn);
+      return await this.hydrateReturnOrFallback(
+        manager,
+        saleReturn.id,
+        companyId,
+        saleReturn,
+      );
     });
   }
 

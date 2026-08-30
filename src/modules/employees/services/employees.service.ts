@@ -1,6 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, Repository } from 'typeorm';
+import {
+  Brackets,
+  EntityManager,
+  In,
+  QueryFailedError,
+  Repository,
+} from 'typeorm';
 import { Employee } from '../entities/employee.entity';
 import { EmployeeStatus } from '../entities/employee-status.enum';
 import { CreateEmployeeDto } from '../dto/create-employee.dto';
@@ -18,9 +24,22 @@ import {
   DEFAULT_PAGE,
 } from '../../../shared/dto/pagination.dto';
 import { resolveSortField } from '../../../shared/dto/resolve-sort-field';
+import { EmployeeAssignment } from '../../hr/entities/employee-assignment.entity';
+import { EmployeeAssignmentStatus } from '../../hr/entities/employee-assignment-status.enum';
+import { Branch } from '../../organization/entities/branch.entity';
+import { Department } from '../../hr/entities/department.entity';
+import { Designation } from '../../hr/entities/designation.entity';
+import { AttendanceRecord } from '../../hr/entities/attendance-record.entity';
+import { LeaveRequest } from '../../hr/entities/leave-request.entity';
+import { EmployeeCompensation } from '../../payroll/entities/employee-compensation.entity';
+import { EmployeePayrollComponent } from '../../payroll/entities/employee-payroll-component.entity';
+import { EmployeeShiftAssignment } from '../../payroll/entities/employee-shift-assignment.entity';
+import { PayrollRunEmployee } from '../../payroll/entities/payroll-run-employee.entity';
+import { SalesAccount } from '../../sales-accounts/entities/sales-account.entity';
+import { SalesAccountAssignment } from '../../sales-accounts/entities/sales-account-assignment.entity';
 
 export interface PaginatedEmployees {
-  data: Employee[];
+  data: EmployeeWithCurrentAssignment[];
   meta: { page: number; limit: number; total: number };
 }
 
@@ -29,6 +48,16 @@ export interface EmployeeScopeFilter {
   branchId?: string;
   allowedBranchIds?: string[] | null;
   ownUserId?: string;
+}
+
+export interface EmployeeWithCurrentAssignment extends Employee {
+  assignmentId?: string | null;
+  departmentId?: string | null;
+  departmentName?: string | null;
+  designationId?: string | null;
+  designationName?: string | null;
+  branchName?: string | null;
+  assignmentEffectiveFrom?: string | null;
 }
 
 const SORTABLE_FIELDS = [
@@ -43,6 +72,14 @@ export class EmployeesService {
   constructor(
     @InjectRepository(Employee)
     private readonly employeeRepository: Repository<Employee>,
+    @InjectRepository(EmployeeAssignment)
+    private readonly assignmentRepository: Repository<EmployeeAssignment>,
+    @InjectRepository(Branch)
+    private readonly branchRepository: Repository<Branch>,
+    @InjectRepository(Department)
+    private readonly departmentRepository: Repository<Department>,
+    @InjectRepository(Designation)
+    private readonly designationRepository: Repository<Designation>,
     private readonly companiesService: CompaniesService,
     private readonly branchesService: BranchesService,
     private readonly transactionService: TransactionService,
@@ -159,7 +196,10 @@ export class EmployeesService {
       .take(limit);
 
     const [data, total] = await qb.getManyAndCount();
-    return { data, meta: { page, limit, total } };
+    return {
+      data: await this.enrichEmployees(data),
+      meta: { page, limit, total },
+    };
   }
 
   async findById(id: string): Promise<Employee> {
@@ -183,7 +223,7 @@ export class EmployeesService {
   async findByIdInScope(
     id: string,
     scope: EmployeeScopeFilter,
-  ): Promise<Employee> {
+  ): Promise<EmployeeWithCurrentAssignment> {
     const qb = this.employeeRepository
       .createQueryBuilder('employee')
       .where('employee.id = :id', { id });
@@ -212,7 +252,8 @@ export class EmployeesService {
     if (!employee) {
       throw new AppException(ErrorCode.NotFound, 'Employee not found');
     }
-    return employee;
+    const [enriched] = await this.enrichEmployees([employee]);
+    return enriched;
   }
 
   /**
@@ -385,5 +426,208 @@ export class EmployeesService {
     const employee = await this.findById(id);
     employee.status = EmployeeStatus.Inactive;
     return this.employeeRepository.save(employee);
+  }
+
+  async deletePermanent(id: string): Promise<void> {
+    await this.transactionService.run(async (manager) => {
+      const employee = await manager.findOne(Employee, { where: { id } });
+      if (!employee) {
+        throw new AppException(ErrorCode.NotFound, 'Employee not found');
+      }
+
+      if (employee.status === EmployeeStatus.Active) {
+        throw new AppException(
+          ErrorCode.Conflict,
+          'Active employees must be archived or terminated before permanent deletion',
+        );
+      }
+
+      if (employee.userId) {
+        throw new AppException(
+          ErrorCode.Conflict,
+          'Employee cannot be permanently deleted while a user account is linked',
+        );
+      }
+
+      const guardedRelations = await this.collectDeleteGuardRelations(
+        manager,
+        employee.id,
+      );
+
+      if (guardedRelations.length > 0) {
+        throw new AppException(
+          ErrorCode.Conflict,
+          `Employee cannot be permanently deleted because related records exist: ${guardedRelations.join(', ')}`,
+        );
+      }
+
+      try {
+        await manager.delete(Employee, { id: employee.id });
+      } catch (error) {
+        if (error instanceof QueryFailedError) {
+          throw new AppException(
+            ErrorCode.Conflict,
+            'Employee cannot be permanently deleted because related records still exist. Refresh the list and try again.',
+          );
+        }
+        throw error;
+      }
+    });
+  }
+
+  private latestAssignmentFor(
+    employeeId: string,
+    assignments: EmployeeAssignment[],
+  ): EmployeeAssignment | undefined {
+    const today = new Date().toISOString().slice(0, 10);
+    const employeeAssignments = assignments
+      .filter(
+        (assignment) =>
+          assignment.employeeId === employeeId &&
+          assignment.status === EmployeeAssignmentStatus.Active,
+      )
+      .sort((left, right) => {
+        const byEffectiveFrom = right.effectiveFrom.localeCompare(
+          left.effectiveFrom,
+        );
+        if (byEffectiveFrom !== 0) {
+          return byEffectiveFrom;
+        }
+        return right.createdAt.getTime() - left.createdAt.getTime();
+      });
+
+    return (
+      employeeAssignments.find(
+        (assignment) =>
+          assignment.effectiveFrom <= today &&
+          (!assignment.effectiveTo || assignment.effectiveTo >= today),
+      ) ?? employeeAssignments[0]
+    );
+  }
+
+  private async enrichEmployees(
+    employees: Employee[],
+  ): Promise<EmployeeWithCurrentAssignment[]> {
+    if (employees.length === 0) {
+      return [];
+    }
+
+    const employeeIds = employees.map((employee) => employee.id);
+    const branchIds = Array.from(
+      new Set(employees.map((employee) => employee.branchId)),
+    );
+
+    const [assignments, branches] = await Promise.all([
+      this.assignmentRepository.find({
+        where: {
+          employeeId: In(employeeIds),
+          status: EmployeeAssignmentStatus.Active,
+        },
+      }),
+      this.branchRepository.find({
+        where: { id: In(branchIds) },
+      }),
+    ]);
+
+    const currentAssignments = employees
+      .map((employee) => this.latestAssignmentFor(employee.id, assignments))
+      .filter((assignment): assignment is EmployeeAssignment => !!assignment);
+
+    const departmentIds = Array.from(
+      new Set(
+        currentAssignments
+          .map((assignment) => assignment.departmentId)
+          .filter((id): id is string => !!id),
+      ),
+    );
+    const designationIds = Array.from(
+      new Set(
+        currentAssignments
+          .map((assignment) => assignment.designationId)
+          .filter((id): id is string => !!id),
+      ),
+    );
+
+    const [departments, designations] = await Promise.all([
+      departmentIds.length > 0
+        ? this.departmentRepository.find({
+            where: { id: In(departmentIds) },
+          })
+        : Promise.resolve([]),
+      designationIds.length > 0
+        ? this.designationRepository.find({
+            where: { id: In(designationIds) },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const branchById = new Map(branches.map((branch) => [branch.id, branch]));
+    const departmentById = new Map(
+      departments.map((department) => [department.id, department]),
+    );
+    const designationById = new Map(
+      designations.map((designation) => [designation.id, designation]),
+    );
+
+    return employees.map((employee) => {
+      const assignment = this.latestAssignmentFor(employee.id, assignments);
+      const department = assignment?.departmentId
+        ? departmentById.get(assignment.departmentId)
+        : undefined;
+      const designation = assignment?.designationId
+        ? designationById.get(assignment.designationId)
+        : undefined;
+      const branch = branchById.get(employee.branchId);
+
+      return {
+        ...employee,
+        assignmentId: assignment?.id ?? null,
+        departmentId: assignment?.departmentId ?? null,
+        departmentName: department?.name ?? null,
+        designationId: assignment?.designationId ?? null,
+        designationName: designation?.name ?? null,
+        branchName: branch?.name ?? null,
+        assignmentEffectiveFrom: assignment?.effectiveFrom ?? null,
+      };
+    });
+  }
+
+  private async collectDeleteGuardRelations(
+    manager: EntityManager,
+    employeeId: string,
+  ): Promise<string[]> {
+    const [
+      assignmentCount,
+      attendanceCount,
+      leaveCount,
+      compensationCount,
+      payrollComponentCount,
+      shiftAssignmentCount,
+      payrollHistoryCount,
+      salesAccountCount,
+      salesAccountAssignmentCount,
+    ] = await Promise.all([
+      manager.count(EmployeeAssignment, { where: { employeeId } }),
+      manager.count(AttendanceRecord, { where: { employeeId } }),
+      manager.count(LeaveRequest, { where: { employeeId } }),
+      manager.count(EmployeeCompensation, { where: { employeeId } }),
+      manager.count(EmployeePayrollComponent, { where: { employeeId } }),
+      manager.count(EmployeeShiftAssignment, { where: { employeeId } }),
+      manager.count(PayrollRunEmployee, { where: { employeeId } }),
+      manager.count(SalesAccount, { where: { employeeId } }),
+      manager.count(SalesAccountAssignment, { where: { employeeId } }),
+    ]);
+
+    return [
+      assignmentCount > 0 ? 'employee assignments' : null,
+      attendanceCount > 0 ? 'attendance records' : null,
+      leaveCount > 0 ? 'leave requests' : null,
+      compensationCount > 0 ? 'employee compensations' : null,
+      payrollComponentCount > 0 ? 'employee payroll components' : null,
+      shiftAssignmentCount > 0 ? 'employee shift assignments' : null,
+      payrollHistoryCount > 0 ? 'payroll history' : null,
+      salesAccountCount > 0 ? 'sales accounts' : null,
+      salesAccountAssignmentCount > 0 ? 'sales account assignments' : null,
+    ].filter((relation): relation is string => !!relation);
   }
 }

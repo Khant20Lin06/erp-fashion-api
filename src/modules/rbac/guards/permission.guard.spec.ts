@@ -19,7 +19,11 @@ describe('PermissionGuard', () => {
   >;
 
   const buildContext = (userId?: string): ExecutionContext => {
-    const request = { user: userId ? { id: userId } : undefined };
+    const request = {
+      user: userId ? { id: userId } : undefined,
+      method: 'GET',
+      originalUrl: '/some/protected/route',
+    };
     return {
       switchToHttp: () => ({ getRequest: () => request }),
       getHandler: () => undefined,
@@ -40,11 +44,24 @@ describe('PermissionGuard', () => {
     );
   });
 
-  it('allows the request when no permission requirement is declared', async () => {
+  it('denies by default when no permission requirement is declared (deny-by-default)', async () => {
     reflector.getAllAndOverride.mockReturnValue(undefined);
 
-    await expect(guard.canActivate(buildContext('user-1'))).resolves.toBe(true);
+    await expect(guard.canActivate(buildContext('user-1'))).rejects.toThrow(
+      ForbiddenException,
+    );
     expect(authorizationService.canAll).not.toHaveBeenCalled();
+  });
+
+  it('denies by default when the requirement has an empty codes list', async () => {
+    reflector.getAllAndOverride.mockReturnValue({
+      codes: [],
+      mode: PermissionRequirementMode.All,
+    } satisfies PermissionRequirement);
+
+    await expect(guard.canActivate(buildContext('user-1'))).rejects.toThrow(
+      ForbiddenException,
+    );
   });
 
   it('throws 401 when the requirement exists but there is no authenticated user', async () => {

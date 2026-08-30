@@ -1,4 +1,8 @@
 import 'dotenv/config';
+import {
+  createScriptLogger,
+  logScriptFailure,
+} from '../../common/logging/script-logger';
 import { AppDataSource } from '../data-source';
 import { Role } from '../../modules/rbac/entities/role.entity';
 import { Permission } from '../../modules/rbac/entities/permission.entity';
@@ -7,6 +11,8 @@ import { RoleResourceScope } from '../../modules/rbac/entities/role-resource-sco
 import { RoleStatus } from '../../modules/rbac/entities/role-status.enum';
 import { SystemRoleCode } from '../../modules/rbac/entities/system-role-code';
 import { DataScope } from '../../modules/rbac/enums/data-scope.enum';
+
+const logger = createScriptLogger('RbacSeed');
 
 /**
  * Idempotent RBAC seed: the base permission catalog required to administer
@@ -372,6 +378,10 @@ const PERMISSION_CATALOG: Array<{
     description: 'Delete attribute options',
   },
   // Phase 10 — Product / Variant / Pricing
+  { resource: 'uoms', action: 'read', description: 'View UOMs' },
+  { resource: 'uoms', action: 'create', description: 'Create UOMs' },
+  { resource: 'uoms', action: 'update', description: 'Update UOMs' },
+  { resource: 'uoms', action: 'delete', description: 'Delete UOMs' },
   { resource: 'products', action: 'read', description: 'View products' },
   { resource: 'products', action: 'create', description: 'Create products' },
   { resource: 'products', action: 'update', description: 'Update products' },
@@ -395,6 +405,26 @@ const PERMISSION_CATALOG: Array<{
     resource: 'product_variants',
     action: 'delete',
     description: 'Delete product variants',
+  },
+  {
+    resource: 'product_variant_uoms',
+    action: 'read',
+    description: 'View product variant UOM mappings',
+  },
+  {
+    resource: 'product_variant_uoms',
+    action: 'create',
+    description: 'Create product variant UOM mappings',
+  },
+  {
+    resource: 'product_variant_uoms',
+    action: 'update',
+    description: 'Update product variant UOM mappings',
+  },
+  {
+    resource: 'product_variant_uoms',
+    action: 'delete',
+    description: 'Delete product variant UOM mappings',
   },
   { resource: 'barcodes', action: 'read', description: 'View barcodes' },
   { resource: 'barcodes', action: 'create', description: 'Create barcodes' },
@@ -616,6 +646,51 @@ const PERMISSION_CATALOG: Array<{
     description: 'View purchase orders',
   },
   {
+    resource: 'purchase_requests',
+    action: 'read',
+    description: 'View purchase requests',
+  },
+  {
+    resource: 'purchase_requests',
+    action: 'create',
+    description: 'Create purchase requests',
+  },
+  {
+    resource: 'purchase_requests',
+    action: 'confirm',
+    description: 'Approve, reject, or convert a purchase request',
+  },
+  {
+    resource: 'purchase_rfqs',
+    action: 'read',
+    description: 'View purchase RFQs',
+  },
+  {
+    resource: 'purchase_rfqs',
+    action: 'create',
+    description: 'Create purchase RFQs',
+  },
+  {
+    resource: 'purchase_rfqs',
+    action: 'confirm',
+    description: 'Send, close, or cancel purchase RFQs',
+  },
+  {
+    resource: 'supplier_quotations',
+    action: 'read',
+    description: 'View supplier quotations',
+  },
+  {
+    resource: 'supplier_quotations',
+    action: 'create',
+    description: 'Create supplier quotations',
+  },
+  {
+    resource: 'supplier_quotations',
+    action: 'confirm',
+    description: 'Award or reject supplier quotations',
+  },
+  {
     resource: 'purchase_orders',
     action: 'create',
     description: 'Create purchase orders',
@@ -634,6 +709,41 @@ const PERMISSION_CATALOG: Array<{
     resource: 'purchase_order_items',
     action: 'read',
     description: 'View purchase order line items',
+  },
+  {
+    resource: 'purchase_invoices',
+    action: 'read',
+    description: 'View purchase invoices',
+  },
+  {
+    resource: 'purchase_invoices',
+    action: 'confirm',
+    description: 'Post purchase invoices to accounts payable',
+  },
+  {
+    resource: 'purchase_invoices',
+    action: 'cancel',
+    description: 'Void purchase invoices before or after posting',
+  },
+  {
+    resource: 'purchase_returns',
+    action: 'read',
+    description: 'View purchase returns',
+  },
+  {
+    resource: 'purchase_returns',
+    action: 'create',
+    description: 'Create purchase returns',
+  },
+  {
+    resource: 'purchase_returns',
+    action: 'confirm',
+    description: 'Complete purchase returns and apply supplier credits',
+  },
+  {
+    resource: 'purchase_returns',
+    action: 'cancel',
+    description: 'Cancel draft purchase returns',
   },
   // Phase 14 — Inventory (WarehouseStock/GoodsReceipt/StockTransfer/StockAdjustment)
   {
@@ -690,6 +800,16 @@ const PERMISSION_CATALOG: Array<{
     action: 'create',
     description:
       'Create and confirm a payment (receipt or payment) with allocations',
+  },
+  {
+    resource: 'payments',
+    action: 'reverse',
+    description: 'Reverse a confirmed payment and unwind its allocations',
+  },
+  {
+    resource: 'payments',
+    action: 'reallocate',
+    description: 'Reallocate a confirmed payment across supplier invoices',
   },
   // PaymentMethod: read+create only, matching the locked minimal API
   // surface (D14) — no update/delete endpoint exists for PaymentMethod in
@@ -1048,8 +1168,10 @@ const SUPER_ADMIN_ALL_SCOPE_RESOURCES: readonly string[] = [
   'brands',
   'collections',
   'attribute_options',
+  'uoms',
   'products',
   'product_variants',
+  'product_variant_uoms',
   'barcodes',
   'price_lists',
   'price_list_items',
@@ -1067,8 +1189,13 @@ const SUPER_ADMIN_ALL_SCOPE_RESOURCES: readonly string[] = [
   'sales',
   'sale_items',
   // Phase 13 — Purchase
+  'purchase_requests',
+  'purchase_rfqs',
+  'supplier_quotations',
   'purchase_orders',
   'purchase_order_items',
+  'purchase_invoices',
+  'purchase_returns',
   // Phase 14 — Inventory
   'warehouse_stock',
   'goods_receipts',
@@ -1140,7 +1267,7 @@ async function seed(): Promise<void> {
         description: entry.description,
       });
       permission = await permissionRepository.save(permission);
-      console.log(`Created permission: ${code}`);
+      logger.log(`Created permission: ${code}`);
     }
 
     permissions.push(permission);
@@ -1159,7 +1286,7 @@ async function seed(): Promise<void> {
       isSystemRole: true,
     });
     superAdminRole = await roleRepository.save(superAdminRole);
-    console.log('Created role: SUPER_ADMIN');
+    logger.log('Created role: SUPER_ADMIN');
   }
 
   for (const permission of permissions) {
@@ -1174,7 +1301,7 @@ async function seed(): Promise<void> {
           permissionId: permission.id,
         }),
       );
-      console.log(`Granted ${permission.code} to SUPER_ADMIN`);
+      logger.log(`Granted ${permission.code} to SUPER_ADMIN`);
     }
   }
 
@@ -1192,15 +1319,15 @@ async function seed(): Promise<void> {
           scopeValue: null,
         }),
       );
-      console.log(`Granted ALL scope for ${resource} to SUPER_ADMIN`);
+      logger.log(`Granted ALL scope for ${resource} to SUPER_ADMIN`);
     }
   }
 
   await AppDataSource.destroy();
-  console.log('RBAC seed complete.');
+  logger.log('RBAC seed complete.');
 }
 
 seed().catch((error: unknown) => {
-  console.error('RBAC seed failed', error);
+  logScriptFailure('RBAC seed failed', error, logger);
   process.exit(1);
 });

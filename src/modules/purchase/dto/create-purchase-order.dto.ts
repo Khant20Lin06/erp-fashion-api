@@ -42,6 +42,10 @@ export class CreatePurchaseOrderDto {
   paymentTermId?: string;
 
   @IsOptional()
+  @IsUUID()
+  sourceSupplierQuotationId?: string;
+
+  @IsOptional()
   @IsDateString()
   transactionDate?: string;
 

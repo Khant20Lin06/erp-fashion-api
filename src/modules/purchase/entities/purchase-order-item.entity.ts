@@ -6,6 +6,7 @@ import {
 } from 'typeorm';
 import { PurchaseOrder } from './purchase-order.entity';
 import { ProductVariant } from '../../products/entities/product-variant.entity';
+import { Uom } from '../../uom/entities/uom.entity';
 
 /**
  * PurchaseOrder line item. Snapshot-only — never live-references mutable
@@ -49,8 +50,25 @@ export class PurchaseOrderItem {
   @JoinColumn({ name: 'product_variant_id' })
   productVariant!: ProductVariant;
 
+  @Index()
+  @Column({ name: 'uom_id', type: 'char', length: 36, nullable: true })
+  uomId!: string | null;
+
+  @ManyToOne(() => Uom, { onDelete: 'RESTRICT', nullable: true })
+  @JoinColumn({ name: 'uom_id' })
+  uom?: Uom | null;
+
+  @Column({ name: 'uom_code_snapshot', type: 'varchar', length: 20, nullable: true })
+  uomCodeSnapshot!: string | null;
+
+  @Column({ name: 'uom_name_snapshot', type: 'varchar', length: 100, nullable: true })
+  uomNameSnapshot!: string | null;
+
   @Column({ name: 'quantity', type: 'int' })
   quantity!: number;
+
+  @Column({ name: 'base_quantity_snapshot', type: 'int', default: 0 })
+  baseQuantitySnapshot!: number;
 
   /**
    * Client-supplied, server-validated (>= 0) transactional purchase cost —
@@ -64,6 +82,15 @@ export class PurchaseOrderItem {
     scale: 2,
   })
   unitCostSnapshot!: string;
+
+  @Column({
+    name: 'conversion_factor_to_base_snapshot',
+    type: 'decimal',
+    precision: 14,
+    scale: 4,
+    default: 1,
+  })
+  conversionFactorToBaseSnapshot!: string;
 
   @Column({
     name: 'discount_snapshot',

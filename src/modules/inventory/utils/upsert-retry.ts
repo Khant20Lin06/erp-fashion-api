@@ -1,3 +1,9 @@
+import { Logger } from '@nestjs/common';
+
+type RetryLogger = Pick<Logger, 'warn'>;
+
+const logger = new Logger('RetryOnDuplicateEntry');
+
 /**
  * Retries a MySQL `INSERT ... ON DUPLICATE KEY UPDATE` upsert on the
  * specific transient InnoDB error it can raise under high concurrent-
@@ -25,6 +31,7 @@
 export async function retryOnDuplicateEntry<T>(
   work: () => Promise<T>,
   maxAttempts = 5,
+  retryLogger: RetryLogger = logger,
 ): Promise<T> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -38,11 +45,12 @@ export async function retryOnDuplicateEntry<T>(
       };
       const code = err?.code ?? err?.driverError?.code;
       const errno = err?.errno ?? err?.driverError?.errno;
-
-      console.error(
-        `[retryOnDuplicateEntry] attempt ${attempt} failed: code=${String(code)} errno=${String(errno)}`,
-      );
       const isDuplicateEntry = code === 'ER_DUP_ENTRY' || errno === 1062;
+      if (isDuplicateEntry) {
+        retryLogger.warn(
+          `[retryOnDuplicateEntry] retrying duplicate-entry upsert attempt=${attempt}/${maxAttempts} code=${String(code)} errno=${String(errno)}`,
+        );
+      }
       if (!isDuplicateEntry || attempt === maxAttempts) {
         throw error;
       }

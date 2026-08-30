@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Headers,
+  HttpCode,
   HttpStatus,
   Param,
   ParseUUIDPipe,
@@ -31,6 +32,8 @@ import {
   PaymentResponseDto,
   toPaymentResponseDto,
 } from '../dto/payment-response.dto';
+import { ReversePaymentDto } from '../dto/reverse-payment.dto';
+import { ReallocatePaymentDto } from '../dto/reallocate-payment.dto';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../rbac/guards/permission.guard';
 import { RequirePermission } from '../../rbac/decorators/require-permission.decorator';
@@ -180,5 +183,53 @@ export class PaymentsController {
     );
     response.status(wasExisting ? HttpStatus.OK : HttpStatus.CREATED);
     return toPaymentResponseDto(payment);
+  }
+
+  @Post(':id/reverse')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('payments.reverse')
+  async reverse(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReversePaymentDto,
+    @Query('companyId') companyIdQuery?: string,
+  ): Promise<PaymentResponseDto> {
+    const companyId = await resolveRequestCompanyId(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+    );
+    const entity = await this.paymentsService.reverse(
+      id,
+      companyId,
+      user.id,
+      dto,
+    );
+    return toPaymentResponseDto(entity);
+  }
+
+  @Post(':id/reallocate')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('payments.reallocate')
+  async reallocate(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReallocatePaymentDto,
+    @Query('companyId') companyIdQuery?: string,
+  ): Promise<PaymentResponseDto> {
+    const companyId = await resolveRequestCompanyId(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+    );
+    const entity = await this.paymentsService.reallocate(
+      id,
+      companyId,
+      user.id,
+      dto,
+    );
+    return toPaymentResponseDto(entity);
   }
 }

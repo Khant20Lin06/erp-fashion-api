@@ -94,6 +94,14 @@ export const envValidationSchema = Joi.object({
   AUTH_RATE_LIMIT_MAX_ATTEMPTS: Joi.number().integer().min(1).default(10),
   AUTH_RATE_LIMIT_WINDOW_SECONDS: Joi.number().integer().min(1).default(60),
 
+  // Global API rate limiting (Phase 21 addendum). Applies to every request
+  // as an IP-based floor against blunt-force flooding/DoS — separate from
+  // AuthRateLimitGuard (per-identity, auth-endpoint-specific, much
+  // stricter) and from any per-route override (e.g. AI chat, reports).
+  RATE_LIMIT_ENABLED: Joi.boolean().default(true),
+  RATE_LIMIT_MAX_REQUESTS: Joi.number().integer().min(1).default(300),
+  RATE_LIMIT_WINDOW_SECONDS: Joi.number().integer().min(1).default(60),
+
   // Kafka (Phase 18 — event transport only, never the source of truth).
   // Never hardcode a broker address in application code — always read
   // these through ConfigService.

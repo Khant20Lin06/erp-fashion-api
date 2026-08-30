@@ -1,8 +1,10 @@
 import { EntityManager, Repository, SelectQueryBuilder } from 'typeorm';
 import { SalesService } from './sales.service';
 import { Sale } from '../entities/sale.entity';
+import { SaleItem } from '../entities/sale-item.entity';
 import { SaleStatus } from '../entities/sale-status.enum';
 import { CompanySaleCounter } from '../entities/company-sale-counter.entity';
+import { WarehouseStock } from '../../inventory/entities/warehouse-stock.entity';
 import { TransactionService } from '../../../core/transaction/transaction.service';
 import { CompaniesService } from '../../organization/services/companies.service';
 import { BranchesService } from '../../organization/services/branches.service';
@@ -11,6 +13,9 @@ import { WarehouseStatus } from '../../organization/entities/warehouse-status.en
 import { CustomersService } from '../../customer-supplier/services/customers.service';
 import { CustomerStatus } from '../../customer-supplier/entities/customer-status.enum';
 import { ProductVariantsService } from '../../products/services/product-variants.service';
+import { ProductVariantUomsService } from '../../products/services/product-variant-uoms.service';
+import { PriceListItemsService } from '../../products/services/price-list-items.service';
+import { PriceList } from '../../products/entities/price-list.entity';
 import { ProductVariantStatus } from '../../products/entities/product-variant-status.enum';
 import { PriceListStatus } from '../../products/entities/price-list-status.enum';
 import { SalesAccountStatus } from '../../sales-accounts/entities/sales-account-status.enum';
@@ -19,6 +24,7 @@ import { CompanyStatus } from '../../organization/entities/company-status.enum';
 import { ErrorCode } from '../../../core/errors/error-codes';
 import { LoyaltyService } from '../../loyalty/services/loyalty.service';
 import { PromotionsService } from '../../promotions/services/promotions.service';
+import { ProductVariantUomUsageType } from '../../products/entities/product-variant-uom-usage-type.enum';
 
 describe('SalesService', () => {
   let service: SalesService;
@@ -38,6 +44,12 @@ describe('SalesService', () => {
   >;
   let productVariantsService: jest.Mocked<
     Pick<ProductVariantsService, 'findByIdInCompany'>
+  >;
+  let productVariantUomsService: jest.Mocked<
+    Pick<ProductVariantUomsService, 'resolveSelectionForUsage'>
+  >;
+  let priceListItemsService: jest.Mocked<
+    Pick<PriceListItemsService, 'resolveActivePrice'>
   >;
   let salesAccountAccessService: jest.Mocked<
     Pick<SalesAccountAccessService, 'canAccessSalesAccount'>
@@ -99,7 +111,7 @@ describe('SalesService', () => {
       ...overrides,
     }) as never;
   const buildPriceListItem = (overrides: Record<string, unknown> = {}) =>
-    ({ id: 'pli-1', price: '100.00', ...overrides }) as never;
+    ({ id: 'pli-1', price: '100.00', status: 'ACTIVE', ...overrides }) as never;
   const buildCounter = (overrides: Record<string, unknown> = {}) =>
     ({
       id: 'counter-1',
@@ -153,6 +165,12 @@ describe('SalesService', () => {
     warehousesService = { findById: jest.fn() };
     customersService = { findByIdInCompany: jest.fn() };
     productVariantsService = { findByIdInCompany: jest.fn() };
+    productVariantUomsService = {
+      resolveSelectionForUsage: jest.fn().mockResolvedValue(null),
+    };
+    priceListItemsService = {
+      resolveActivePrice: jest.fn().mockResolvedValue(buildPriceListItem()),
+    };
     salesAccountAccessService = { canAccessSalesAccount: jest.fn() };
     loyaltyService = { earnForSale: jest.fn().mockResolvedValue(null) };
     promotionsService = {
@@ -169,6 +187,8 @@ describe('SalesService', () => {
       warehousesService as unknown as WarehousesService,
       customersService as unknown as CustomersService,
       productVariantsService as unknown as ProductVariantsService,
+      productVariantUomsService as unknown as ProductVariantUomsService,
+      priceListItemsService as unknown as PriceListItemsService,
       salesAccountAccessService as unknown as SalesAccountAccessService,
       loyaltyService as unknown as LoyaltyService,
       promotionsService as unknown as PromotionsService,
@@ -189,11 +209,35 @@ describe('SalesService', () => {
         buildVariant(),
       );
       manager.findOneOrFail.mockResolvedValue(buildVariant());
-      manager.find.mockResolvedValue([buildPriceList()]); // single active price list
+      manager.find.mockImplementation((entity: unknown) => {
+        if (entity === PriceList) {
+          return Promise.resolve([buildPriceList()]);
+        }
+        if (entity === SaleItem) {
+          return Promise.resolve([
+            {
+              id: 'sale-item-1',
+              saleId: 'sale-1',
+              productVariantId: 'variant-1',
+              uomId: null,
+              uomCodeSnapshot: null,
+              uomNameSnapshot: null,
+              quantity: 2,
+              baseQuantitySnapshot: 2,
+              conversionFactorToBaseSnapshot: '1.0000',
+              unitPriceSnapshot: '100.00',
+              discountSnapshot: '0.00',
+              taxSnapshot: '0.00',
+              lineTotal: '200.00',
+              productNameSnapshot: 'Test Product',
+              skuSnapshot: 'SKU-1',
+            },
+          ]);
+        }
+        return Promise.resolve([]);
+      });
       manager.findOne.mockImplementation((entity: unknown) => {
         const name = (entity as { name?: string }).name;
-        if (name === 'PriceListItem')
-          return Promise.resolve(buildPriceListItem());
         return Promise.resolve(null);
       });
       managerQueryBuilder.getOneOrFail.mockResolvedValue(buildCounter());
@@ -356,7 +400,7 @@ describe('SalesService', () => {
     });
 
     it('rejects when no active price is found for the resolved price list', async () => {
-      manager.findOne.mockResolvedValue(null); // no PriceListItem found
+      priceListItemsService.resolveActivePrice.mockResolvedValue(null);
 
       await expect(
         service.create('company-a', 'user-1', baseDto as never),
@@ -401,6 +445,49 @@ describe('SalesService', () => {
       expect(result.grandTotal).toBe('110.00');
       expect(result.taxAmount).toBe('10.00');
     });
+
+    it('resolves UOM-specific pricing and snapshots the converted base quantity', async () => {
+      const created: Record<string, unknown>[] = [];
+      manager.create.mockImplementation(
+        (_entity: unknown, data: Record<string, unknown>) => {
+          created.push(data);
+          return data;
+        },
+      );
+      productVariantUomsService.resolveSelectionForUsage.mockResolvedValue({
+        uomId: 'uom-box',
+        code: 'BOX',
+        name: 'Box',
+        symbol: null,
+        conversionFactorToBase: '12.0000',
+        usageType: ProductVariantUomUsageType.Sales,
+        isBase: false,
+      });
+      priceListItemsService.resolveActivePrice.mockResolvedValue(
+        buildPriceListItem({ price: '1200.00', uomId: 'uom-box' }),
+      );
+
+      await service.create('company-a', 'user-1', {
+        ...baseDto,
+        items: [{ productVariantId: 'variant-1', uomId: 'uom-box', quantity: 2 }],
+      } as never);
+
+      expect(priceListItemsService.resolveActivePrice).toHaveBeenCalledWith(
+        'company-a',
+        'pl-1',
+        'variant-1',
+        'uom-box',
+        expect.any(Date),
+      );
+      const saleItemPayload = created.find((row) => row.uomId === 'uom-box');
+      expect(saleItemPayload).toMatchObject({
+        uomId: 'uom-box',
+        uomCodeSnapshot: 'BOX',
+        quantity: 2,
+        baseQuantitySnapshot: 24,
+        conversionFactorToBaseSnapshot: '12.0000',
+      });
+    });
   });
 
   describe('confirm / cancel — lifecycle transitions', () => {
@@ -437,6 +524,29 @@ describe('SalesService', () => {
       expect(managerQueryBuilder.setLock).toHaveBeenCalledWith(
         'pessimistic_write',
       );
+    });
+
+    it('deducts stock using baseQuantitySnapshot when the sale line was entered in an alternate UOM', async () => {
+      saleRepository.findOne.mockResolvedValue(
+        buildSale({
+          items: [
+            {
+              productVariantId: 'variant-1',
+              quantity: 2,
+              baseQuantitySnapshot: 24,
+            },
+          ],
+        }),
+      );
+      managerQueryBuilder.getOneOrFail.mockResolvedValue(
+        buildStock({ onHandQuantity: 30 }),
+      );
+
+      await service.confirm('sale-1', 'company-a', 'user-1');
+
+      expect(manager.update).toHaveBeenCalledWith(WarehouseStock, 'stock-1', {
+        onHandQuantity: 6,
+      });
     });
 
     it('rejects confirmation when Sale.warehouseId is null (stock issue requires a warehouse)', async () => {
@@ -680,6 +790,111 @@ describe('SalesService', () => {
       ).rejects.toMatchObject({ errorCode: ErrorCode.Conflict });
 
       expect(manager.update).not.toHaveBeenCalled();
+    });
+  });
+  describe('previewItemPricing', () => {
+    const basePreviewDto = {
+      productVariantId: 'variant-1',
+      quantity: 2,
+    };
+
+    beforeEach(() => {
+      companiesService.findActiveByIdOrNull.mockResolvedValue(buildCompany());
+      productVariantsService.findByIdInCompany.mockResolvedValue(
+        buildVariant(),
+      );
+      manager.find.mockImplementation((entity: unknown) => {
+        if (entity === PriceList) {
+          return Promise.resolve([buildPriceList()]);
+        }
+        return Promise.resolve([]);
+      });
+      manager.findOne.mockImplementation((entity: unknown) => {
+        if (entity === PriceList) {
+          return Promise.resolve(buildPriceList());
+        }
+        return Promise.resolve(null);
+      });
+      manager.findOneOrFail.mockResolvedValue(
+        buildVariant({ product: { name: 'Test Product' } }),
+      );
+    });
+
+    it('resolves UOM-aware exact pricing using the same active price-list rules as sale creation', async () => {
+      productVariantUomsService.resolveSelectionForUsage.mockResolvedValue({
+        uomId: 'uom-box',
+        code: 'BOX',
+        name: 'Box',
+        symbol: null,
+        conversionFactorToBase: '12.0000',
+        usageType: ProductVariantUomUsageType.Sales,
+        isBase: false,
+      });
+      priceListItemsService.resolveActivePrice.mockResolvedValue(
+        buildPriceListItem({ price: '1200.00', uomId: 'uom-box' }),
+      );
+
+      const result = await service.previewItemPricing('company-a', {
+        ...basePreviewDto,
+        uomId: 'uom-box',
+      } as never);
+
+      expect(priceListItemsService.resolveActivePrice).toHaveBeenCalledWith(
+        'company-a',
+        'pl-1',
+        'variant-1',
+        'uom-box',
+        expect.any(Date),
+      );
+      expect(result).toMatchObject({
+        productVariantId: 'variant-1',
+        priceListId: 'pl-1',
+        uomId: 'uom-box',
+        uomCode: 'BOX',
+        uomName: 'Box',
+        quantity: 2,
+        baseQuantity: 24,
+        conversionFactorToBase: '12.0000',
+        unitPrice: '1200.00',
+      });
+    });
+
+    it('rejects preview when the company has zero or multiple active price lists and no explicit priceListId is supplied', async () => {
+      manager.find.mockResolvedValue([
+        buildPriceList(),
+        buildPriceList({ id: 'pl-2' }),
+      ]);
+
+      await expect(
+        service.previewItemPricing('company-a', basePreviewDto as never),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.ValidationError });
+    });
+
+    it('allows preview with an explicit active priceListId even when multiple active price lists exist', async () => {
+      manager.find.mockResolvedValue([
+        buildPriceList(),
+        buildPriceList({ id: 'pl-2' }),
+      ]);
+      manager.findOne.mockImplementation((entity: unknown) => {
+        if (entity === PriceList) {
+          return Promise.resolve(buildPriceList({ id: 'pl-2' }));
+        }
+        return Promise.resolve(null);
+      });
+
+      const result = await service.previewItemPricing('company-a', {
+        ...basePreviewDto,
+        priceListId: 'pl-2',
+      } as never);
+
+      expect(result.priceListId).toBe('pl-2');
+      expect(priceListItemsService.resolveActivePrice).toHaveBeenCalledWith(
+        'company-a',
+        'pl-2',
+        'variant-1',
+        null,
+        expect.any(Date),
+      );
     });
   });
 });

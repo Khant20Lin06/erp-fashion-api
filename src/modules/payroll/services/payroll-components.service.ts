@@ -16,6 +16,7 @@ import { resolveSortField } from '../../../shared/dto/resolve-sort-field';
 import {
   CreatePayrollComponentDto,
   ListPayrollComponentsDto,
+  type PayrollComponentUsageDto,
   UpdatePayrollComponentDto,
 } from '../dto/payroll-components.dto';
 
@@ -216,19 +217,43 @@ export class PayrollComponentsService {
 
   async remove(id: string, companyId: string): Promise<void> {
     const entity = await this.findByIdInCompany(id, companyId);
-    const [assignmentCount, itemCount] = await Promise.all([
-      this.employeeComponentRepository.count({
-        where: { payrollComponentId: id },
-      }),
-      this.runItemRepository.count({ where: { payrollComponentId: id } }),
-    ]);
-    if (assignmentCount > 0 || itemCount > 0) {
+    const { assignmentCount, historyCount } = await this.getUsageSummary(id);
+    if (assignmentCount > 0 || historyCount > 0) {
       throw new AppException(
         ErrorCode.Conflict,
         'Payroll component is referenced by employee assignments or payroll history and cannot be deleted',
       );
     }
     await this.componentRepository.softRemove(entity);
+  }
+
+  async getUsageSummary(id: string): Promise<PayrollComponentUsageDto> {
+    const [assignmentCount, historyCount] = await Promise.all([
+      this.employeeComponentRepository.count({
+        where: { payrollComponentId: id },
+      }),
+      this.runItemRepository.count({ where: { payrollComponentId: id } }),
+    ]);
+
+    return {
+      assignmentCount,
+      historyCount,
+      canDelete: assignmentCount === 0 && historyCount === 0,
+    };
+  }
+
+  async getUsageSummaries(
+    ids: string[],
+  ): Promise<Map<string, PayrollComponentUsageDto>> {
+    const result = new Map<string, PayrollComponentUsageDto>();
+
+    await Promise.all(
+      ids.map(async (id) => {
+        result.set(id, await this.getUsageSummary(id));
+      }),
+    );
+
+    return result;
   }
 
   private assertCalculationFieldsMatch(

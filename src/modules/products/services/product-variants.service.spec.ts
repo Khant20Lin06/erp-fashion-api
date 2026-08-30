@@ -3,6 +3,8 @@ import { ProductVariantsService } from './product-variants.service';
 import { ProductVariant } from '../entities/product-variant.entity';
 import { ProductVariantStatus } from '../entities/product-variant-status.enum';
 import { ProductVariantAttribute } from '../entities/product-variant-attribute.entity';
+import { ProductVariantUom } from '../entities/product-variant-uom.entity';
+import { ProductVariantUomUsageType } from '../entities/product-variant-uom-usage-type.enum';
 import { ProductsService } from './products.service';
 import { AttributeOptionsService } from '../../master-data/services/attribute-options.service';
 import { AttributeOption } from '../../master-data/entities/attribute-option.entity';
@@ -10,6 +12,10 @@ import { AttributeOptionStatus } from '../../master-data/entities/attribute-opti
 import { AttributeKind } from '../../master-data/entities/attribute-kind.enum';
 import { TransactionService } from '../../../core/transaction/transaction.service';
 import { ErrorCode } from '../../../core/errors/error-codes';
+import { PurchaseOrderItem } from '../../purchase/entities/purchase-order-item.entity';
+import { PurchaseOrderStatus } from '../../purchase/entities/purchase-order-status.enum';
+import { Uom } from '../../uom/entities/uom.entity';
+import { UomCategory } from '../../uom/entities/uom-category.enum';
 
 describe('ProductVariantsService', () => {
   let service: ProductVariantsService;
@@ -22,6 +28,13 @@ describe('ProductVariantsService', () => {
   let variantAttributeRepository: jest.Mocked<
     Pick<Repository<ProductVariantAttribute>, 'find'>
   >;
+  let variantUomRepository: jest.Mocked<
+    Pick<Repository<ProductVariantUom>, 'find' | 'softRemove'>
+  >;
+  let purchaseOrderItemRepository: jest.Mocked<
+    Pick<Repository<PurchaseOrderItem>, 'find'>
+  >;
+  let uomRepository: jest.Mocked<Pick<Repository<Uom>, 'findOne'>>;
   let productsService: jest.Mocked<Pick<ProductsService, 'findByIdInCompany'>>;
   let attributeOptionsService: jest.Mocked<
     Pick<AttributeOptionsService, 'findByIdInCompany'>
@@ -51,6 +64,7 @@ describe('ProductVariantsService', () => {
       combinationKey: 'option-1',
       costPrice: '10.00',
       sellingPrice: '20.00',
+      baseUomId: null,
       status: ProductVariantStatus.Active,
       ...overrides,
     }) as ProductVariant;
@@ -66,6 +80,19 @@ describe('ProductVariantsService', () => {
       status: AttributeOptionStatus.Active,
       ...overrides,
     }) as AttributeOption;
+
+  const buildUom = (overrides: Partial<Uom> = {}): Uom =>
+    ({
+      id: 'uom-1',
+      companyId: 'company-a',
+      code: 'PCS',
+      name: 'Pieces',
+      symbol: 'pcs',
+      category: UomCategory.Count,
+      decimalPlaces: 0,
+      isActive: true,
+      ...overrides,
+    }) as Uom;
 
   beforeEach(() => {
     queryBuilder = {
@@ -83,6 +110,9 @@ describe('ProductVariantsService', () => {
       createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
     };
     variantAttributeRepository = { find: jest.fn().mockResolvedValue([]) };
+    variantUomRepository = { find: jest.fn().mockResolvedValue([]), softRemove: jest.fn() };
+    purchaseOrderItemRepository = { find: jest.fn().mockResolvedValue([]) };
+    uomRepository = { findOne: jest.fn() };
     productsService = {
       findByIdInCompany: jest.fn().mockResolvedValue({ id: 'product-1' }),
     };
@@ -107,6 +137,9 @@ describe('ProductVariantsService', () => {
     service = new ProductVariantsService(
       variantRepository as unknown as Repository<ProductVariant>,
       variantAttributeRepository as unknown as Repository<ProductVariantAttribute>,
+      variantUomRepository as unknown as Repository<ProductVariantUom>,
+      purchaseOrderItemRepository as unknown as Repository<PurchaseOrderItem>,
+      uomRepository as unknown as Repository<Uom>,
       productsService as unknown as ProductsService,
       attributeOptionsService as unknown as AttributeOptionsService,
       transactionService as unknown as TransactionService,
@@ -186,6 +219,30 @@ describe('ProductVariantsService', () => {
         service.create('product-1', 'company-a', dto),
       ).rejects.toMatchObject({ errorCode: ErrorCode.ValidationError });
     });
+
+    it('stores exactly one base UOM mapping when baseUomId is provided', async () => {
+      attributeOptionsService.findByIdInCompany.mockResolvedValue(
+        buildOption(),
+      );
+      variantRepository.findOne.mockResolvedValue(null);
+      managerMock.findOne.mockResolvedValue(null);
+      uomRepository.findOne.mockResolvedValue(buildUom());
+
+      const result = await service.create('product-1', 'company-a', {
+        ...dto,
+        baseUomId: 'uom-1',
+      });
+
+      expect(result.baseUomId).toBe('uom-1');
+      expect(managerMock.save).toHaveBeenCalledWith(
+        ProductVariantUom,
+        expect.objectContaining({
+          uomId: 'uom-1',
+          usageType: ProductVariantUomUsageType.Both,
+          isBase: true,
+        }),
+      );
+    });
   });
 
   describe('findByIdInCompany — cross-company isolation (IDOR)', () => {
@@ -221,7 +278,31 @@ describe('ProductVariantsService', () => {
 
       await service.remove('variant-1', 'company-a');
 
+      expect(variantUomRepository.find).toHaveBeenCalledWith({
+        where: { variantId: 'variant-1', companyId: 'company-a' },
+      });
       expect(variantRepository.softRemove).toHaveBeenCalledWith(variant);
+    });
+
+    it('rejects deleting a variant referenced by an open purchase order', async () => {
+      const variant = buildVariant();
+      variantRepository.findOne.mockResolvedValue(variant);
+      purchaseOrderItemRepository.find.mockResolvedValue([
+        {
+          id: 'poi-1',
+          productVariantId: 'variant-1',
+          purchaseOrder: {
+            id: 'po-1',
+            companyId: 'company-a',
+            status: PurchaseOrderStatus.Draft,
+          },
+        },
+      ] as unknown as PurchaseOrderItem[]);
+
+      await expect(service.remove('variant-1', 'company-a')).rejects.toMatchObject(
+        { errorCode: ErrorCode.Conflict },
+      );
+      expect(variantRepository.softRemove).not.toHaveBeenCalled();
     });
   });
 });

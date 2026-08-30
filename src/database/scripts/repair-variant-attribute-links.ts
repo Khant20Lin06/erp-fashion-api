@@ -1,4 +1,8 @@
 import 'dotenv/config';
+import {
+  createScriptLogger,
+  logScriptFailure,
+} from '../../common/logging/script-logger';
 import { In } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { AppDataSource } from '../data-source';
@@ -15,6 +19,8 @@ import {
   findAttributeCatalogEntry,
   resolveLegacyVariantSelection,
 } from '../seeds/attribute-option.catalog';
+
+const logger = createScriptLogger('RepairVariantAttributeLinksScript');
 
 type VariantRow = {
   variantId: string;
@@ -72,7 +78,7 @@ async function repairVariantAttributeLinks() {
   );
 
   if (variants.length === 0) {
-    console.log('No variant products found. Nothing to repair.');
+    logger.log('No variant products found. Nothing to repair.');
     return;
   }
 
@@ -296,7 +302,7 @@ async function repairVariantAttributeLinks() {
     ]);
   }
 
-  console.log(
+  logger.log(
     [
       'Variant attribute repair complete.',
       `Variants scanned: ${variants.length}`,
@@ -310,7 +316,7 @@ async function repairVariantAttributeLinks() {
   );
 
   if (unresolvedVariants.length > 0) {
-    console.log(
+    logger.warn(
       `Unresolved variant samples:\n${unresolvedVariants.slice(0, 10).join('\n')}`,
     );
   }
@@ -318,8 +324,7 @@ async function repairVariantAttributeLinks() {
 
 repairVariantAttributeLinks()
   .catch((error) => {
-    console.error('Failed to repair variant attribute links.');
-    console.error(error);
+    logScriptFailure('Failed to repair variant attribute links.', error, logger);
     process.exitCode = 1;
   })
   .finally(async () => {

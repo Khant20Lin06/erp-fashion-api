@@ -15,6 +15,7 @@ export interface PurchaseOrderResponseDto {
   branchId: string | null;
   warehouseId: string | null;
   paymentTermId: string | null;
+  sourceSupplierQuotationId: string | null;
   transactionDate: Date;
   expectedDeliveryDate: Date | null;
   status: PurchaseOrderStatus;
@@ -30,6 +31,16 @@ export interface PurchaseOrderResponseDto {
   notes: string | null;
   createdBy: string | null;
   updatedBy: string | null;
+  submittedAt: Date | null;
+  submittedBy: string | null;
+  approvedAt: Date | null;
+  approvedBy: string | null;
+  rejectedAt: Date | null;
+  rejectedBy: string | null;
+  rejectedReason: string | null;
+  closedAt: Date | null;
+  closedBy: string | null;
+  closeReason: string | null;
   createdAt: Date;
   updatedAt: Date;
   itemCount: number;
@@ -48,6 +59,7 @@ export function toPurchaseOrderResponseDto(
     branchId: entity.branchId,
     warehouseId: entity.warehouseId,
     paymentTermId: entity.paymentTermId,
+    sourceSupplierQuotationId: entity.sourceSupplierQuotationId,
     transactionDate: entity.transactionDate,
     expectedDeliveryDate: entity.expectedDeliveryDate,
     status: entity.status,
@@ -61,6 +73,16 @@ export function toPurchaseOrderResponseDto(
     notes: entity.notes,
     createdBy: entity.createdBy,
     updatedBy: entity.updatedBy,
+    submittedAt: entity.submittedAt,
+    submittedBy: entity.submittedBy,
+    approvedAt: entity.approvedAt,
+    approvedBy: entity.approvedBy,
+    rejectedAt: entity.rejectedAt,
+    rejectedBy: entity.rejectedBy,
+    rejectedReason: entity.rejectedReason,
+    closedAt: entity.closedAt,
+    closedBy: entity.closedBy,
+    closeReason: entity.closeReason,
     createdAt: entity.createdAt,
     updatedAt: entity.updatedAt,
     itemCount: entity.itemCount ?? entity.items?.length ?? 0,

@@ -82,6 +82,7 @@ export class ListAttendanceRecordsDto extends PaginationDto {
 export interface AttendanceRecordResponseDto {
   id: string;
   employeeId: string;
+  employeeName: string | null;
   companyId: string;
   branchId: string;
   attendanceDate: string;
@@ -99,6 +100,7 @@ export function toAttendanceRecordResponseDto(
   return {
     id: entity.id,
     employeeId: entity.employeeId,
+    employeeName: entity.employee?.displayName ?? null,
     companyId: entity.companyId,
     branchId: entity.branchId,
     attendanceDate: entity.attendanceDate,

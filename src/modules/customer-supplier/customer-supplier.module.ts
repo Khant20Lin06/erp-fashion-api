@@ -31,6 +31,9 @@ import { AuthModule } from '../auth/auth.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { OrganizationModule } from '../organization/organization.module';
 import { MasterDataModule } from '../master-data/master-data.module';
+import { PurchaseOrder } from '../purchase/entities/purchase-order.entity';
+import { Payment } from '../payments/entities/payment.entity';
+import { GoodsReceipt } from '../inventory/entities/goods-receipt.entity';
 
 /**
  * Phase 11 — Customer / Supplier (locked decision §1-27). A single flat
@@ -53,6 +56,9 @@ import { MasterDataModule } from '../master-data/master-data.module';
       SupplierAddress,
       CustomerContact,
       SupplierContact,
+      PurchaseOrder,
+      Payment,
+      GoodsReceipt,
     ]),
     AuthModule,
     RbacModule,

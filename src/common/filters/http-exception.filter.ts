@@ -31,9 +31,15 @@ const STATUS_CODE_TO_ERROR_CODE: Record<number, string> = {
   [HttpStatus.TOO_MANY_REQUESTS]: ErrorCode.RateLimited,
 };
 
+type ExceptionLogger = Pick<Logger, 'warn' | 'error'>;
+
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
-  private readonly logger = new Logger(GlobalExceptionFilter.name);
+  constructor(
+    private readonly logger: ExceptionLogger = new Logger(
+      GlobalExceptionFilter.name,
+    ),
+  ) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
@@ -61,12 +67,26 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
     if (statusCode >= 500) {
       this.logger.error(
-        `Unhandled exception on ${request.method} ${body.path} [${requestId}]`,
+        this.buildLogMessage('Unhandled exception', request, body),
         exception instanceof Error ? exception.stack : undefined,
       );
+    } else if (this.shouldWarnOnClientError(statusCode)) {
+      this.logger.warn(this.buildLogMessage('Client exception', request, body));
     }
 
     response.status(statusCode).json(body);
+  }
+
+  private shouldWarnOnClientError(statusCode: number): boolean {
+    return statusCode >= 400 && statusCode < 500 && statusCode !== 404;
+  }
+
+  private buildLogMessage(
+    prefix: string,
+    request: Request,
+    body: ErrorResponseBody,
+  ): string {
+    return `${prefix} on ${request.method} ${body.path} [${body.requestId}] status=${body.statusCode} code=${body.code} message="${body.message}"`;
   }
 
   private resolveRequestId(request: Request): string {

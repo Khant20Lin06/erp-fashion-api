@@ -4,6 +4,7 @@ import { Product } from '../entities/product.entity';
 import { ProductStatus } from '../entities/product-status.enum';
 import { ProductType } from '../entities/product-type.enum';
 import { ProductVariant } from '../entities/product-variant.entity';
+import { ProductVariantUom } from '../entities/product-variant-uom.entity';
 import { CompaniesService } from '../../organization/services/companies.service';
 import { Company } from '../../organization/entities/company.entity';
 import { CompanyStatus } from '../../organization/entities/company-status.enum';
@@ -22,6 +23,10 @@ import { AttributeOptionStatus } from '../../master-data/entities/attribute-opti
 import { AttributeKind } from '../../master-data/entities/attribute-kind.enum';
 import { TransactionService } from '../../../core/transaction/transaction.service';
 import { ErrorCode } from '../../../core/errors/error-codes';
+import { PurchaseOrderItem } from '../../purchase/entities/purchase-order-item.entity';
+import { PurchaseOrderStatus } from '../../purchase/entities/purchase-order-status.enum';
+import { Uom } from '../../uom/entities/uom.entity';
+import { UomCategory } from '../../uom/entities/uom-category.enum';
 
 describe('ProductsService', () => {
   let service: ProductsService;
@@ -31,6 +36,13 @@ describe('ProductsService', () => {
   let variantRepository: jest.Mocked<
     Pick<Repository<ProductVariant>, 'find' | 'softRemove'>
   >;
+  let variantUomRepository: jest.Mocked<
+    Pick<Repository<ProductVariantUom>, 'find' | 'softRemove'>
+  >;
+  let purchaseOrderItemRepository: jest.Mocked<
+    Pick<Repository<PurchaseOrderItem>, 'find'>
+  >;
+  let uomRepository: jest.Mocked<Pick<Repository<Uom>, 'findOne'>>;
   let companiesService: jest.Mocked<
     Pick<CompaniesService, 'findActiveByIdOrNull'>
   >;
@@ -100,6 +112,19 @@ describe('ProductsService', () => {
       ...overrides,
     }) as AttributeOption;
 
+  const buildUom = (overrides: Partial<Uom> = {}): Uom =>
+    ({
+      id: 'uom-1',
+      companyId: 'company-a',
+      code: 'PCS',
+      name: 'Pieces',
+      symbol: 'pcs',
+      category: UomCategory.Count,
+      decimalPlaces: 0,
+      isActive: true,
+      ...overrides,
+    }) as Uom;
+
   const buildProduct = (overrides: Partial<Product> = {}): Product =>
     ({
       id: 'product-1',
@@ -130,6 +155,12 @@ describe('ProductsService', () => {
       createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
     };
     variantRepository = { find: jest.fn(), softRemove: jest.fn() };
+    variantUomRepository = {
+      find: jest.fn().mockResolvedValue([]),
+      softRemove: jest.fn(),
+    };
+    purchaseOrderItemRepository = { find: jest.fn().mockResolvedValue([]) };
+    uomRepository = { findOne: jest.fn() };
     companiesService = { findActiveByIdOrNull: jest.fn() };
     categoriesService = { findByIdInCompany: jest.fn() };
     brandsService = { findByIdInCompany: jest.fn() };
@@ -154,6 +185,9 @@ describe('ProductsService', () => {
     service = new ProductsService(
       productRepository as unknown as Repository<Product>,
       variantRepository as unknown as Repository<ProductVariant>,
+      variantUomRepository as unknown as Repository<ProductVariantUom>,
+      purchaseOrderItemRepository as unknown as Repository<PurchaseOrderItem>,
+      uomRepository as unknown as Repository<Uom>,
       companiesService as unknown as CompaniesService,
       categoriesService as unknown as CategoriesService,
       brandsService as unknown as BrandsService,
@@ -200,6 +234,38 @@ describe('ProductsService', () => {
         expect.objectContaining({
           sku: 'TSHIRT-001',
           combinationKey: 'option-1',
+        }),
+      );
+    });
+
+    it('stores baseUomId on the initial variant when provided', async () => {
+      companiesService.findActiveByIdOrNull.mockResolvedValue(buildCompany());
+      categoriesService.findByIdInCompany.mockResolvedValue(buildCategory());
+      brandsService.findByIdInCompany.mockResolvedValue(buildBrand());
+      attributeOptionsService.findByIdInCompany.mockResolvedValue(
+        buildOption(),
+      );
+      productRepository.findOne.mockResolvedValue(null);
+      managerMock.findOne.mockResolvedValue(null);
+      uomRepository.findOne.mockResolvedValue(buildUom());
+
+      await service.create('company-a', {
+        ...validDto,
+        initialVariant: {
+          ...validDto.initialVariant,
+          baseUomId: 'uom-1',
+        },
+      });
+
+      expect(managerMock.save).toHaveBeenCalledWith(
+        ProductVariant,
+        expect.objectContaining({ baseUomId: 'uom-1' }),
+      );
+      expect(managerMock.save).toHaveBeenCalledWith(
+        ProductVariantUom,
+        expect.objectContaining({
+          uomId: 'uom-1',
+          isBase: true,
         }),
       );
     });
@@ -354,10 +420,35 @@ describe('ProductsService', () => {
       expect(variantRepository.find).toHaveBeenCalledWith({
         where: { productId: 'product-1', companyId: 'company-a' },
       });
+      expect(variantUomRepository.find).toHaveBeenCalled();
       expect(variantRepository.softRemove).toHaveBeenCalledWith(variants);
       expect(productRepository.softRemove).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'product-1' }),
       );
+    });
+
+    it('rejects deleting a product referenced by an open purchase order', async () => {
+      productRepository.findOne.mockResolvedValue(buildProduct());
+      variantRepository.find.mockResolvedValue([
+        { id: 'variant-1', productId: 'product-1', companyId: 'company-a' },
+      ] as ProductVariant[]);
+      purchaseOrderItemRepository.find.mockResolvedValue([
+        {
+          id: 'poi-1',
+          productVariantId: 'variant-1',
+          purchaseOrder: {
+            id: 'po-1',
+            companyId: 'company-a',
+            status: PurchaseOrderStatus.Confirmed,
+          },
+        },
+      ] as unknown as PurchaseOrderItem[]);
+
+      await expect(service.remove('product-1', 'company-a')).rejects.toMatchObject(
+        { errorCode: ErrorCode.Conflict },
+      );
+      expect(variantRepository.softRemove).not.toHaveBeenCalled();
+      expect(productRepository.softRemove).not.toHaveBeenCalled();
     });
 
     it('soft-deletes a product with no variants', async () => {

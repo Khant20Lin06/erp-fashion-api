@@ -18,6 +18,8 @@ import {
   PurchaseOrderResponseDto,
   toPurchaseOrderResponseDto,
 } from '../dto/purchase-order-response.dto';
+import { RejectPurchaseOrderDto } from '../dto/reject-purchase-order.dto';
+import { ClosePurchaseOrderDto } from '../dto/close-purchase-order.dto';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../rbac/guards/permission.guard';
 import { RequirePermission } from '../../rbac/decorators/require-permission.decorator';
@@ -122,6 +124,98 @@ export class PurchaseOrdersController {
       id,
       companyId,
       user.id,
+    );
+    return toPurchaseOrderResponseDto(entity);
+  }
+
+  @Post(':id/submit')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('purchase_orders.confirm')
+  async submit(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('companyId') companyIdQuery?: string,
+  ): Promise<PurchaseOrderResponseDto> {
+    const companyId = await resolveRequestCompanyId(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+    );
+    const entity = await this.purchaseOrdersService.submit(
+      id,
+      companyId,
+      user.id,
+    );
+    return toPurchaseOrderResponseDto(entity);
+  }
+
+  @Post(':id/approve')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('purchase_orders.confirm')
+  async approve(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('companyId') companyIdQuery?: string,
+  ): Promise<PurchaseOrderResponseDto> {
+    const companyId = await resolveRequestCompanyId(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+    );
+    const entity = await this.purchaseOrdersService.approve(
+      id,
+      companyId,
+      user.id,
+    );
+    return toPurchaseOrderResponseDto(entity);
+  }
+
+  @Post(':id/reject')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('purchase_orders.confirm')
+  async reject(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RejectPurchaseOrderDto,
+    @Query('companyId') companyIdQuery?: string,
+  ): Promise<PurchaseOrderResponseDto> {
+    const companyId = await resolveRequestCompanyId(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+    );
+    const entity = await this.purchaseOrdersService.reject(
+      id,
+      companyId,
+      user.id,
+      dto,
+    );
+    return toPurchaseOrderResponseDto(entity);
+  }
+
+  @Post(':id/close')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('purchase_orders.confirm')
+  async close(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ClosePurchaseOrderDto,
+    @Query('companyId') companyIdQuery?: string,
+  ): Promise<PurchaseOrderResponseDto> {
+    const companyId = await resolveRequestCompanyId(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+    );
+    const entity = await this.purchaseOrdersService.close(
+      id,
+      companyId,
+      user.id,
+      dto,
     );
     return toPurchaseOrderResponseDto(entity);
   }

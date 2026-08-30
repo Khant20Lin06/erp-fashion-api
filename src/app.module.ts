@@ -1,6 +1,8 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
+import { GlobalRateLimitGuard } from './common/security/global-rate-limit.guard';
 import appConfig from './config/app.config';
 import databaseConfig from './config/database.config';
 import authConfig from './config/auth.config';
@@ -47,6 +49,7 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { AiAssistantModule } from './modules/ai-assistant/ai-assistant.module';
 import { SettingsModule } from './modules/settings/settings.module';
+import { UomModule } from './modules/uom/uom.module';
 import { ObservabilityModule } from './observability/observability.module';
 import { isOpenApiGenerationMode } from './shared/utils/runtime-flags';
 
@@ -111,6 +114,13 @@ const databaseImport = isOpenApiGenerationMode()
     ReportsModule,
     AiAssistantModule,
     SettingsModule,
+    UomModule,
+  ],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: GlobalRateLimitGuard,
+    },
   ],
 })
 export class AppModule implements NestModule {

@@ -1,4 +1,8 @@
 import 'dotenv/config';
+import {
+  createScriptLogger,
+  logScriptFailure,
+} from '../../common/logging/script-logger';
 import { AppDataSource } from '../data-source';
 import { Company } from '../../modules/organization/entities/company.entity';
 import { Branch } from '../../modules/organization/entities/branch.entity';
@@ -33,6 +37,8 @@ import { WarehouseStock } from '../../modules/inventory/entities/warehouse-stock
 import { Sale } from '../../modules/sales/entities/sale.entity';
 import { SaleStatus } from '../../modules/sales/entities/sale-status.enum';
 import { SaleType } from '../../modules/sales/entities/sale-type.enum';
+
+const logger = createScriptLogger('BulkSeed');
 import { SaleItem } from '../../modules/sales/entities/sale-item.entity';
 import { User } from '../../modules/users/entities/user.entity';
 import { FindOptionsWhere, Repository } from 'typeorm';
@@ -525,7 +531,7 @@ const SALE_STATUSES = [
 
 async function bulkSeed() {
   await AppDataSource.initialize();
-  console.log('🌱 Bulk seed starting…');
+  logger.log('Bulk seed starting.');
 
   const companyRepo = AppDataSource.getRepository(Company);
   const branchRepo = AppDataSource.getRepository(Branch);
@@ -551,10 +557,10 @@ async function bulkSeed() {
   // ── resolve company ────────────────────────────────────────────────────────
   const company = await findSeedRow(companyRepo, { code: 'FASHION-ENT-MAIN' });
   if (!company) {
-    console.error('❌ Company not found. Run enterprise.seed.ts first.');
+    logger.error('Company not found. Run enterprise.seed.ts first.');
     process.exit(1);
   }
-  console.log('✅ Using company:', company.name);
+  logger.log(`Using company: ${company.name}`);
 
   const adminUser = await userRepo.findOne({
     where: { email: 'admin@fashionerp.com' },
@@ -644,7 +650,7 @@ async function bulkSeed() {
     }
     branches.push(b);
   }
-  console.log('✅ Branches ready:', branches.length);
+  logger.log(`Branches ready: ${branches.length}`);
 
   // ── resolve / create warehouses ────────────────────────────────────────────
   const warehouseDefs = [
@@ -688,7 +694,7 @@ async function bulkSeed() {
     }
     warehouses.push(w);
   }
-  console.log('✅ Warehouses ready:', warehouses.length);
+  logger.log(`Warehouses ready: ${warehouses.length}`);
 
   // ── resolve / create categories ────────────────────────────────────────────
   const categoryDefs = [
@@ -722,7 +728,7 @@ async function bulkSeed() {
     }
     categoriesMap[cd.code] = cat;
   }
-  console.log('✅ Categories ready:', Object.keys(categoriesMap).length);
+  logger.log(`Categories ready: ${Object.keys(categoriesMap).length}`);
 
   // ── resolve / create brands ────────────────────────────────────────────────
   const brandDefs = [
@@ -751,7 +757,7 @@ async function bulkSeed() {
     }
     brandsMap[bd.code] = br;
   }
-  console.log('✅ Brands ready:', Object.keys(brandsMap).length);
+  logger.log(`Brands ready: ${Object.keys(brandsMap).length}`);
 
   // ── collections ────────────────────────────────────────────────────────────
   const collectionDefs = [
@@ -950,8 +956,8 @@ async function bulkSeed() {
       allVariants.push(variant);
     }
   }
-  console.log(
-    `✅ Products seeded (${createdProducts} new). Total variants: ${allVariants.length}`,
+  logger.log(
+    `Products seeded (${createdProducts} new). Total variants: ${allVariants.length}`,
   );
 
   // ── customers (50) ────────────────────────────────────────────────────────
@@ -985,8 +991,8 @@ async function bulkSeed() {
     }
     customers.push(cust);
   }
-  console.log(
-    `✅ Customers seeded (${createdCustomers} new). Total: ${customers.length}`,
+  logger.log(
+    `Customers seeded (${createdCustomers} new). Total: ${customers.length}`,
   );
 
   // ── suppliers (10) ────────────────────────────────────────────────────────
@@ -1040,6 +1046,7 @@ async function bulkSeed() {
       code: 'SUPP-0010',
       name: 'Jakarta Batik & Silk Studio',
       email: 'studio@jakartabatik.id',
+      country: 'Indonesia',
     },
   ];
   for (const sd of supplierDefs) {
@@ -1055,13 +1062,14 @@ async function bulkSeed() {
           supplierCode: sd.code,
           name: sd.name,
           email: sd.email,
+          country: sd.country,
           phone: `+959${rand(700000000, 799999999)}`,
           status: SupplierStatus.Active,
         }),
       );
     }
   }
-  console.log('✅ Suppliers ready.');
+  logger.log('Suppliers ready.');
 
   // ── sales orders (50) ─────────────────────────────────────────────────────
   // Get all existing variants from DB to ensure we have valid IDs
@@ -1069,7 +1077,7 @@ async function bulkSeed() {
     where: { companyId: company.id },
   });
   if (dbVariants.length === 0) {
-    console.error('❌ No variants found. Cannot create sales orders.');
+    logger.error('No variants found. Cannot create sales orders.');
     await AppDataSource.destroy();
     process.exit(1);
   }
@@ -1158,15 +1166,15 @@ async function bulkSeed() {
     }
     createdSales++;
   }
-  console.log(
-    `✅ Sales orders seeded (${createdSales} new). Total in DB: ${existingSaleCount + createdSales}`,
+  logger.log(
+    `Sales orders seeded (${createdSales} new). Total in DB: ${existingSaleCount + createdSales}`,
   );
 
   await AppDataSource.destroy();
-  console.log('\n🎉 Bulk seeding completed successfully!');
+  logger.log('Bulk seeding completed successfully.');
 }
 
 bulkSeed().catch((err) => {
-  console.error('❌ Bulk seeding failed:', err);
+  logScriptFailure('Bulk seeding failed', err, logger);
   process.exit(1);
 });

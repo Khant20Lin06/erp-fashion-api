@@ -58,6 +58,9 @@ export class Supplier extends BaseEntity {
   @Column({ name: 'email', type: 'varchar', length: 255, nullable: true })
   email!: string | null;
 
+  @Column({ name: 'country', type: 'varchar', length: 100, nullable: true })
+  country!: string | null;
+
   @Column({
     name: 'supplier_group_id',
     type: 'char',

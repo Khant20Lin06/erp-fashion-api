@@ -196,7 +196,30 @@ describe('SalesReportsService', () => {
     expect(queryBuilder.leftJoin).toHaveBeenCalledWith('sale.branch', 'branch');
   });
 
-  it('byProduct returns only real, query-derived fields — no fabricated profitMargin', async () => {
+  it('customerSummary returns real new/returning counts and average spend', async () => {
+    queryBuilder.getRawMany
+      .mockResolvedValueOnce([
+        { customerId: 'cust-1', saleCount: '1', grandTotal: '120.00' },
+        { customerId: 'cust-2', saleCount: '2', grandTotal: '280.00' },
+      ])
+      .mockResolvedValueOnce([
+        { customerId: 'cust-1', firstSaleDate: '2026-08-05T00:00:00.000Z' },
+        { customerId: 'cust-2', firstSaleDate: '2026-07-15T00:00:00.000Z' },
+      ]);
+
+    const result = await service.customerSummary('company-a', {
+      fromDate: '2026-08-01T00:00:00.000Z',
+      toDate: '2026-08-31T23:59:59.999Z',
+    });
+
+    expect(result).toEqual({
+      newCustomers: 1,
+      returningCustomers: 1,
+      averageCustomerSpend: '200.00',
+    });
+  });
+
+  it('byProduct returns only real, query-derived fields and no fabricated profitMargin', async () => {
     queryBuilder.getRawMany.mockResolvedValue([
       { productName: 'Denim Jacket', unitsSold: '10', revenue: '500.00' },
     ]);
@@ -207,5 +230,18 @@ describe('SalesReportsService', () => {
       { productName: 'Denim Jacket', unitsSold: 10, revenue: '500.00' },
     ]);
     expect(result[0]).not.toHaveProperty('profitMargin');
+  });
+
+  it('byProduct honors the requested sort and limit', async () => {
+    queryBuilder.getRawMany.mockResolvedValue([]);
+
+    await service.byProduct('company-a', {
+      sortBy: 'unitsSold',
+      sortDirection: 'ASC',
+      limit: 3,
+    });
+
+    expect(queryBuilder.orderBy).toHaveBeenCalledWith('unitsSold', 'ASC');
+    expect(queryBuilder.limit).toHaveBeenCalledWith(3);
   });
 });

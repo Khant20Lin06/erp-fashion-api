@@ -3,9 +3,37 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { PurchaseOrder } from './entities/purchase-order.entity';
 import { PurchaseOrderItem } from './entities/purchase-order-item.entity';
 import { CompanyPurchaseCounter } from './entities/company-purchase-counter.entity';
+import { CompanyPurchaseRequestCounter } from './entities/company-purchase-request-counter.entity';
+import { CompanyPurchaseReturnCounter } from './entities/company-purchase-return-counter.entity';
+import { CompanyPurchaseRfqCounter } from './entities/company-purchase-rfq-counter.entity';
+import { CompanySupplierQuotationCounter } from './entities/company-supplier-quotation-counter.entity';
+import { PurchaseRequest } from './entities/purchase-request.entity';
+import { PurchaseRequestItem } from './entities/purchase-request-item.entity';
+import { PurchaseInvoice } from './entities/purchase-invoice.entity';
+import { PurchaseReturn } from './entities/purchase-return.entity';
+import { PurchaseReturnItem } from './entities/purchase-return-item.entity';
+import { PurchaseRfq } from './entities/purchase-rfq.entity';
+import { PurchaseRfqItem } from './entities/purchase-rfq-item.entity';
+import { SupplierQuotation } from './entities/supplier-quotation.entity';
+import { SupplierQuotationItem } from './entities/supplier-quotation-item.entity';
 import { GoodsReceipt } from '../inventory/entities/goods-receipt.entity';
+import { GoodsReceiptItem } from '../inventory/entities/goods-receipt-item.entity';
+import { WarehouseStock } from '../inventory/entities/warehouse-stock.entity';
+import { StockMovement } from '../inventory/entities/stock-movement.entity';
+import { Supplier } from '../customer-supplier/entities/supplier.entity';
+import { ProductVariant } from '../products/entities/product-variant.entity';
 import { PurchaseOrdersService } from './services/purchase-orders.service';
+import { PurchaseRequestsService } from './services/purchase-requests.service';
+import { PurchaseInvoicesService } from './services/purchase-invoices.service';
+import { PurchaseReturnsService } from './services/purchase-returns.service';
+import { PurchaseRfqsService } from './services/purchase-rfqs.service';
+import { SupplierQuotationsService } from './services/supplier-quotations.service';
 import { PurchaseOrdersController } from './controllers/purchase-orders.controller';
+import { PurchaseRequestsController } from './controllers/purchase-requests.controller';
+import { PurchaseInvoicesController } from './controllers/purchase-invoices.controller';
+import { PurchaseReturnsController } from './controllers/purchase-returns.controller';
+import { PurchaseRfqsController } from './controllers/purchase-rfqs.controller';
+import { SupplierQuotationsController } from './controllers/supplier-quotations.controller';
 import { AuthModule } from '../auth/auth.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { OrganizationModule } from '../organization/organization.module';
@@ -35,7 +63,25 @@ import { ProductsModule } from '../products/products.module';
       PurchaseOrder,
       PurchaseOrderItem,
       CompanyPurchaseCounter,
+      CompanyPurchaseRequestCounter,
+      CompanyPurchaseReturnCounter,
+      CompanyPurchaseRfqCounter,
+      CompanySupplierQuotationCounter,
+      PurchaseRequest,
+      PurchaseRequestItem,
+      PurchaseInvoice,
+      PurchaseReturn,
+      PurchaseReturnItem,
+      PurchaseRfq,
+      PurchaseRfqItem,
+      SupplierQuotation,
+      SupplierQuotationItem,
       GoodsReceipt,
+      GoodsReceiptItem,
+      WarehouseStock,
+      StockMovement,
+      Supplier,
+      ProductVariant,
     ]),
     AuthModule,
     RbacModule,
@@ -43,8 +89,29 @@ import { ProductsModule } from '../products/products.module';
     CustomerSupplierModule,
     ProductsModule,
   ],
-  controllers: [PurchaseOrdersController],
-  providers: [PurchaseOrdersService],
-  exports: [PurchaseOrdersService],
+  controllers: [
+    PurchaseOrdersController,
+    PurchaseRequestsController,
+    PurchaseInvoicesController,
+    PurchaseReturnsController,
+    PurchaseRfqsController,
+    SupplierQuotationsController,
+  ],
+  providers: [
+    PurchaseOrdersService,
+    PurchaseRequestsService,
+    PurchaseInvoicesService,
+    PurchaseReturnsService,
+    PurchaseRfqsService,
+    SupplierQuotationsService,
+  ],
+  exports: [
+    PurchaseOrdersService,
+    PurchaseRequestsService,
+    PurchaseInvoicesService,
+    PurchaseReturnsService,
+    PurchaseRfqsService,
+    SupplierQuotationsService,
+  ],
 })
 export class PurchaseModule {}

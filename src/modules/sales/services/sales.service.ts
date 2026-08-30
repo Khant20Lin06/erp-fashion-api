@@ -1,12 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import {
-  EntityManager,
-  IsNull,
-  LessThanOrEqual,
-  MoreThan,
-  Repository,
-} from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { Sale } from '../entities/sale.entity';
 import { SaleItem } from '../entities/sale-item.entity';
 import { SaleStatus } from '../entities/sale-status.enum';
@@ -29,12 +23,14 @@ import { WarehouseStatus } from '../../organization/entities/warehouse-status.en
 import { CustomersService } from '../../customer-supplier/services/customers.service';
 import { CustomerStatus } from '../../customer-supplier/entities/customer-status.enum';
 import { ProductVariantsService } from '../../products/services/product-variants.service';
+import { ProductVariantUomsService } from '../../products/services/product-variant-uoms.service';
+import { PriceListItemsService } from '../../products/services/price-list-items.service';
 import { ProductVariant } from '../../products/entities/product-variant.entity';
 import { ProductVariantStatus } from '../../products/entities/product-variant-status.enum';
 import { PriceList } from '../../products/entities/price-list.entity';
 import { PriceListStatus } from '../../products/entities/price-list-status.enum';
-import { PriceListItem } from '../../products/entities/price-list-item.entity';
 import { PriceListItemStatus } from '../../products/entities/price-list-item-status.enum';
+import { ProductVariantUomUsageType } from '../../products/entities/product-variant-uom-usage-type.enum';
 import { SalesAccount } from '../../sales-accounts/entities/sales-account.entity';
 import { SalesAccountStatus } from '../../sales-accounts/entities/sales-account-status.enum';
 import { SalesAccountAccessService } from '../../sales-accounts/services/sales-account-access.service';
@@ -51,6 +47,30 @@ import { resolveSortField } from '../../../shared/dto/resolve-sort-field';
 export interface PaginatedSales {
   data: Sale[];
   meta: { page: number; limit: number; total: number };
+}
+
+export interface SaleItemPricingPreview {
+  productVariantId: string;
+  priceListId: string;
+  uomId: string | null;
+  uomCode: string | null;
+  uomName: string | null;
+  quantity: number;
+  baseQuantity: number;
+  conversionFactorToBase: string;
+  unitPrice: string;
+  transactionDate: string;
+}
+
+export interface SalesPriceListOption {
+  id: string;
+  code: string;
+  name: string;
+  currency: string;
+}
+
+interface ResolvedSaleItemPricing extends Omit<SaleItemPricingPreview, 'transactionDate'> {
+  variant: ProductVariant;
 }
 
 const SORTABLE_FIELDS = [
@@ -97,6 +117,8 @@ export class SalesService {
     private readonly warehousesService: WarehousesService,
     private readonly customersService: CustomersService,
     private readonly productVariantsService: ProductVariantsService,
+    private readonly productVariantUomsService: ProductVariantUomsService,
+    private readonly priceListItemsService: PriceListItemsService,
     private readonly salesAccountAccessService: SalesAccountAccessService,
     private readonly loyaltyService: LoyaltyService,
     private readonly promotionsService: PromotionsService,
@@ -165,6 +187,27 @@ export class SalesService {
       throw new AppException(ErrorCode.NotFound, 'Sale not found');
     }
     return sale;
+  }
+
+  async listActivePriceLists(companyId: string): Promise<SalesPriceListOption[]> {
+    const company = await this.companiesService.findActiveByIdOrNull(companyId);
+    if (!company) {
+      throw new AppException(
+        ErrorCode.ValidationError,
+        'companyId does not reference an active company',
+      );
+    }
+
+    const activeLists = await this.saleRepository.manager.find(PriceList, {
+      where: { companyId, status: PriceListStatus.Active },
+      order: { name: 'ASC' },
+    });
+    return activeLists.map((priceList) => ({
+      id: priceList.id,
+      code: priceList.code,
+      name: priceList.name,
+      currency: priceList.currency,
+    }));
   }
 
   private async assertValidBranch(
@@ -341,40 +384,86 @@ export class SalesService {
    * 10). No price-priority engine — a single point-in-time query against
    * the one resolved PriceList.
    */
-  private async resolveActivePrice(
-    priceListId: string,
-    productVariantId: string,
-    manager: EntityManager,
-  ): Promise<string> {
-    const now = new Date();
-    const item = await manager.findOne(PriceListItem, {
-      where: [
-        {
-          priceListId,
-          productVariantId,
-          status: PriceListItemStatus.Active,
-          validFrom: LessThanOrEqual(now),
-          validTo: IsNull(),
-        },
-        {
-          priceListId,
-          productVariantId,
-          status: PriceListItemStatus.Active,
-          validFrom: LessThanOrEqual(now),
-          validTo: MoreThan(now),
-        },
-      ],
-      order: { validFrom: 'DESC' },
-    });
+  private computeBaseQuantity(
+    quantity: number,
+    conversionFactorToBase: string,
+    fieldName: string,
+  ): number {
+    const rawBaseQuantity = quantity * Number(conversionFactorToBase);
+    const roundedBaseQuantity = Math.round(rawBaseQuantity);
 
-    if (!item) {
+    if (
+      !Number.isFinite(rawBaseQuantity) ||
+      rawBaseQuantity <= 0 ||
+      Math.abs(rawBaseQuantity - roundedBaseQuantity) > 1e-9
+    ) {
       throw new AppException(
         ErrorCode.ValidationError,
-        `No active price found for product variant ${productVariantId} in the resolved price list`,
+        `${fieldName} must convert to a whole positive base-unit quantity`,
       );
     }
 
-    return item.price;
+    return roundedBaseQuantity;
+  }
+
+  private async resolveItemPricing(
+    itemDto: Pick<
+      CreateSaleItemDto,
+      'productVariantId' | 'uomId' | 'quantity' | 'priceListId'
+    >,
+    companyId: string,
+    defaultPriceListId: string | null,
+    transactionDate: Date,
+    manager: EntityManager,
+  ): Promise<ResolvedSaleItemPricing> {
+    const variant = await manager.findOneOrFail(ProductVariant, {
+      where: { id: itemDto.productVariantId, companyId },
+      relations: { product: true },
+    });
+    const selectedUom =
+      await this.productVariantUomsService.resolveSelectionForUsage(
+        variant,
+        companyId,
+        ProductVariantUomUsageType.Sales,
+        itemDto.uomId,
+      );
+    const baseQuantity = this.computeBaseQuantity(
+      itemDto.quantity,
+      selectedUom?.conversionFactorToBase ?? '1.0000',
+      `quantity for product variant ${itemDto.productVariantId}`,
+    );
+    const priceListId = await this.resolvePriceListId(
+      itemDto,
+      companyId,
+      defaultPriceListId,
+      manager,
+    );
+    const priceRow = await this.priceListItemsService.resolveActivePrice(
+      companyId,
+      priceListId,
+      itemDto.productVariantId,
+      selectedUom?.uomId ?? null,
+      transactionDate,
+    );
+    if (!priceRow || priceRow.status !== PriceListItemStatus.Active) {
+      throw new AppException(
+        ErrorCode.ValidationError,
+        `No active price found for product variant ${itemDto.productVariantId} in the resolved price list`,
+      );
+    }
+
+    return {
+      variant,
+      productVariantId: itemDto.productVariantId,
+      priceListId,
+      uomId: selectedUom?.uomId ?? null,
+      uomCode: selectedUom?.code ?? null,
+      uomName: selectedUom?.name ?? null,
+      quantity: itemDto.quantity,
+      baseQuantity,
+      conversionFactorToBase: selectedUom?.conversionFactorToBase ?? '1.0000',
+      unitPrice: priceRow.price,
+    };
   }
 
   /**
@@ -415,6 +504,64 @@ export class SalesService {
     counter.lastSequence += 1;
     await manager.save(CompanySaleCounter, counter);
     return formatSaleNumber(year, counter.lastSequence);
+  }
+
+  async previewItemPricing(
+    companyId: string,
+    itemDto: Pick<
+      CreateSaleItemDto,
+      'productVariantId' | 'uomId' | 'quantity' | 'priceListId'
+    > & { transactionDate?: string },
+  ): Promise<SaleItemPricingPreview> {
+    const company = await this.companiesService.findActiveByIdOrNull(companyId);
+    if (!company) {
+      throw new AppException(
+        ErrorCode.ValidationError,
+        'companyId does not reference an active company',
+      );
+    }
+
+    const variant = await this.productVariantsService.findByIdInCompany(
+      itemDto.productVariantId,
+      companyId,
+    );
+    if (variant.status !== ProductVariantStatus.Active) {
+      throw new AppException(
+        ErrorCode.ValidationError,
+        `Product variant ${itemDto.productVariantId} is not active`,
+      );
+    }
+
+    const transactionDate = itemDto.transactionDate
+      ? new Date(itemDto.transactionDate)
+      : new Date();
+
+    return this.transactionService.run(async (manager) => {
+      const defaultPriceListId = await this.resolveDefaultPriceListId(
+        companyId,
+        manager,
+      );
+      const resolved = await this.resolveItemPricing(
+        itemDto,
+        companyId,
+        defaultPriceListId,
+        transactionDate,
+        manager,
+      );
+
+      return {
+        productVariantId: resolved.productVariantId,
+        priceListId: resolved.priceListId,
+        uomId: resolved.uomId,
+        uomCode: resolved.uomCode,
+        uomName: resolved.uomName,
+        quantity: resolved.quantity,
+        baseQuantity: resolved.baseQuantity,
+        conversionFactorToBase: resolved.conversionFactorToBase,
+        unitPrice: resolved.unitPrice,
+        transactionDate: transactionDate.toISOString(),
+      };
+    });
   }
 
   /**
@@ -500,7 +647,12 @@ export class SalesService {
       let taxTotal = 0;
       const itemRows: Array<{
         productVariantId: string;
+        uomId: string | null;
+        uomCodeSnapshot: string | null;
+        uomNameSnapshot: string | null;
         quantity: number;
+        baseQuantitySnapshot: number;
+        conversionFactorToBaseSnapshot: string;
         unitPriceSnapshot: string;
         discountSnapshot: string;
         taxSnapshot: string;
@@ -510,20 +662,11 @@ export class SalesService {
       }> = [];
 
       for (const itemDto of dto.items) {
-        const variant = await manager.findOneOrFail(ProductVariant, {
-          where: { id: itemDto.productVariantId, companyId },
-          relations: { product: true },
-        });
-
-        const priceListId = await this.resolvePriceListId(
+        const resolvedItem = await this.resolveItemPricing(
           itemDto,
           companyId,
           defaultPriceListId,
-          manager,
-        );
-        const unitPrice = await this.resolveActivePrice(
-          priceListId,
-          itemDto.productVariantId,
+          transactionDate,
           manager,
         );
 
@@ -536,7 +679,7 @@ export class SalesService {
           );
         }
 
-        const lineSubtotal = Number(unitPrice) * itemDto.quantity;
+        const lineSubtotal = Number(resolvedItem.unitPrice) * itemDto.quantity;
         if (discount > lineSubtotal) {
           throw new AppException(
             ErrorCode.ValidationError,
@@ -551,13 +694,18 @@ export class SalesService {
 
         itemRows.push({
           productVariantId: itemDto.productVariantId,
+          uomId: resolvedItem.uomId,
+          uomCodeSnapshot: resolvedItem.uomCode,
+          uomNameSnapshot: resolvedItem.uomName,
           quantity: itemDto.quantity,
-          unitPriceSnapshot: unitPrice,
+          baseQuantitySnapshot: resolvedItem.baseQuantity,
+          conversionFactorToBaseSnapshot: resolvedItem.conversionFactorToBase,
+          unitPriceSnapshot: resolvedItem.unitPrice,
           discountSnapshot: discount.toFixed(2),
           taxSnapshot: tax.toFixed(2),
           lineTotal: lineTotal.toFixed(2),
-          productNameSnapshot: variant.product.name,
-          skuSnapshot: variant.sku,
+          productNameSnapshot: resolvedItem.variant.product.name,
+          skuSnapshot: resolvedItem.variant.sku,
         });
       }
 
@@ -702,10 +850,11 @@ export class SalesService {
       // them — all-or-nothing, no partial deduction (D7, LOCKED).
       for (const item of sortedItems) {
         const stock = lockedStocks.get(item.productVariantId)!;
-        if (stock.onHandQuantity < item.quantity) {
+        const baseQuantity = item.baseQuantitySnapshot ?? item.quantity;
+        if (stock.onHandQuantity < baseQuantity) {
           throw new AppException(
             ErrorCode.Conflict,
-            `Insufficient stock for product variant ${item.productVariantId}: requested ${item.quantity}, available ${stock.onHandQuantity}`,
+            `Insufficient stock for product variant ${item.productVariantId}: requested ${baseQuantity}, available ${stock.onHandQuantity}`,
           );
         }
       }
@@ -713,7 +862,8 @@ export class SalesService {
       // Decrease stock and write a SALE_ISSUE movement per item.
       for (const item of sortedItems) {
         const stock = lockedStocks.get(item.productVariantId)!;
-        stock.onHandQuantity -= item.quantity;
+        const baseQuantity = item.baseQuantitySnapshot ?? item.quantity;
+        stock.onHandQuantity -= baseQuantity;
         // manager.update() rather than manager.save() — an entity
         // hydrated via createQueryBuilder().setLock().getOneOrFail()
         // (as lockWarehouseStockRow() returns) was found, via a real
@@ -728,7 +878,7 @@ export class SalesService {
           warehouseId,
           productVariantId: item.productVariantId,
           movementType: StockMovementType.SaleIssue,
-          quantityChange: -item.quantity,
+          quantityChange: -baseQuantity,
           quantityAfter: stock.onHandQuantity,
           referenceType: StockMovementReferenceType.Sale,
           referenceId: sale.id,

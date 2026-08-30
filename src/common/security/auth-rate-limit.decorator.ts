@@ -1,6 +1,10 @@
 import { SetMetadata } from '@nestjs/common';
 
-export type AuthRateLimitMode = 'login' | 'forgot-password' | 'reset-password';
+export type AuthRateLimitMode =
+  | 'login'
+  | 'forgot-password'
+  | 'reset-password'
+  | 'refresh';
 
 export const AUTH_RATE_LIMIT_METADATA_KEY = 'auth-rate-limit-mode';
 

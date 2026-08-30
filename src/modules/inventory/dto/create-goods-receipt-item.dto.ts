@@ -8,7 +8,7 @@ export class CreateGoodsReceiptItemDto {
   productVariantId!: string;
 
   @IsInt()
-  @Min(1)
+  @Min(0)
   receivedQuantity!: number;
 
   @IsOptional()

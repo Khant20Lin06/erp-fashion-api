@@ -17,6 +17,7 @@ export interface ProductVariantResponseDto {
   sku: string;
   costPrice: string;
   sellingPrice: string;
+  baseUomId: string | null;
   status: ProductVariantStatus;
   attributes: VariantAttributeResponseDto[];
   createdAt: Date;
@@ -34,6 +35,7 @@ export function toProductVariantResponseDto(
     sku: variant.sku,
     costPrice: variant.costPrice,
     sellingPrice: variant.sellingPrice,
+    baseUomId: variant.baseUomId,
     status: variant.status,
     attributes,
     createdAt: variant.createdAt,

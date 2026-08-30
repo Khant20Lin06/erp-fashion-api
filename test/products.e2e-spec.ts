@@ -819,6 +819,52 @@ describeIfDb('Products — Product/Variant/Barcode/PriceList (e2e)', () => {
       expect(item.productVariantId).toBe(variant.id);
     });
 
+    it('lists price list items when companyId is supplied in the query', async () => {
+      const cookie = await loginAndGetCookie(superAdminUser.email);
+      const company = await createCompany(cookie);
+      const category = await createCategory(cookie, company.id);
+      const brand = await createBrand(cookie, company.id);
+      const variant = await setupProductAndVariant(
+        cookie,
+        company.id,
+        category.id,
+        brand.id,
+      );
+
+      const priceListResponse = await request(app.getHttpServer())
+        .post('/api/v1/price-lists')
+        .set('Cookie', [cookie])
+        .send({
+          companyId: company.id,
+          code: `${prefix}-PL-${rand()}`,
+          name: 'Retail Price List',
+          currency: 'USD',
+        });
+      expect(priceListResponse.status).toBe(201);
+      const priceList = priceListResponse.body as PriceListBody;
+
+      const createResponse = await request(app.getHttpServer())
+        .post(
+          `/api/v1/price-lists/${priceList.id}/items?companyId=${company.id}`,
+        )
+        .set('Cookie', [cookie])
+        .send({
+          productVariantId: variant.id,
+          price: '25.00',
+          validFrom: '2026-01-01T00:00:00Z',
+        });
+      expect(createResponse.status).toBe(201);
+
+      const listResponse = await request(app.getHttpServer())
+        .get(
+          `/api/v1/price-lists/${priceList.id}/items?companyId=${company.id}&limit=100`,
+        )
+        .set('Cookie', [cookie]);
+
+      expect(listResponse.status).toBe(200);
+      expect((listResponse.body as { data: PriceListItemBody[] }).data).toHaveLength(1);
+    });
+
     it('rejects a negative price', async () => {
       const cookie = await loginAndGetCookie(superAdminUser.email);
       const company = await createCompany(cookie);

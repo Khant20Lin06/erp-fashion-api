@@ -4,6 +4,7 @@ import { Company } from '../../organization/entities/company.entity';
 import { PriceList } from './price-list.entity';
 import { ProductVariant } from './product-variant.entity';
 import { PriceListItemStatus } from './price-list-item-status.enum';
+import { Uom } from '../../uom/entities/uom.entity';
 
 /**
  * Effective-dated price for one ProductVariant within one PriceList (Phase
@@ -17,7 +18,9 @@ import { PriceListItemStatus } from './price-list-item-status.enum';
  * range exclusion natively).
  */
 @Entity('price_list_items')
-@Index(['priceListId', 'productVariantId', 'validFrom'], { unique: true })
+@Index(['priceListId', 'productVariantId', 'uomId', 'validFrom'], {
+  unique: true,
+})
 export class PriceListItem extends BaseEntity {
   @Column({ name: 'price_list_id', type: 'char', length: 36 })
   priceListId!: string;
@@ -39,6 +42,13 @@ export class PriceListItem extends BaseEntity {
   @ManyToOne(() => Company, { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'company_id' })
   company!: Company;
+
+  @Column({ name: 'uom_id', type: 'char', length: 36, nullable: true })
+  uomId!: string | null;
+
+  @ManyToOne(() => Uom, { onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'uom_id' })
+  uom!: Uom | null;
 
   @Column({ name: 'price', type: 'decimal', precision: 12, scale: 2 })
   price!: string;

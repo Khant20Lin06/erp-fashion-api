@@ -12,6 +12,7 @@ import {
 import { randomUUID } from 'crypto';
 import { generateWebhookSecret } from '../utils/webhook-signature';
 import { postSignedWebhook, WebhookPostResult } from '../utils/webhook-http';
+import { assertSafeWebhookUrl } from '../utils/webhook-url-guard';
 import {
   CreateWebhookSubscriptionDto,
   ListWebhookSubscriptionsDto,
@@ -107,6 +108,8 @@ export class WebhookSubscriptionsService {
       );
     }
 
+    await assertSafeWebhookUrl(dto.url);
+
     const plaintextSecret = generateWebhookSecret();
     const entity = this.subscriptionRepository.create({
       companyId,
@@ -132,7 +135,10 @@ export class WebhookSubscriptionsService {
   ): Promise<WebhookSubscription> {
     const entity = await this.findByIdInCompany(id, companyId);
 
-    if (dto.url !== undefined) entity.url = dto.url;
+    if (dto.url !== undefined) {
+      await assertSafeWebhookUrl(dto.url);
+      entity.url = dto.url;
+    }
     if (dto.description !== undefined) {
       entity.description = dto.description?.trim() || null;
     }

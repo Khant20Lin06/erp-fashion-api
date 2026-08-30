@@ -8,6 +8,7 @@ import { UpdatePriceListItemDto } from '../dto/update-price-list-item.dto';
 import { ListPriceListItemsDto } from '../dto/list-price-list-items.dto';
 import { PriceListsService } from './price-lists.service';
 import { ProductVariantsService } from './product-variants.service';
+import { ProductVariantUomsService } from './product-variant-uoms.service';
 import { AppException } from '../../../core/errors/app.exception';
 import { ErrorCode } from '../../../core/errors/error-codes';
 import {
@@ -41,6 +42,7 @@ export class PriceListItemsService {
     private readonly priceListItemRepository: Repository<PriceListItem>,
     private readonly priceListsService: PriceListsService,
     private readonly productVariantsService: ProductVariantsService,
+    private readonly productVariantUomsService: ProductVariantUomsService,
   ) {}
 
   async findAllForPriceList(
@@ -57,18 +59,32 @@ export class PriceListItemsService {
       SORTABLE_FIELDS,
       'validFrom',
     );
+    const orderDirection = query.order ?? 'DESC';
 
     const where: Record<string, unknown> = { priceListId, companyId };
     if (query.productVariantId) {
       where.productVariantId = query.productVariantId;
     }
+    if (query.uomId !== undefined) {
+      where.uomId = query.uomId;
+    }
     if (query.status) {
       where.status = query.status;
     }
 
+    const order: Record<string, 'ASC' | 'DESC'> = {
+      [sortField]: orderDirection,
+    };
+    if (sortField !== 'createdAt') {
+      order.createdAt = orderDirection;
+    }
+    if (sortField !== 'id') {
+      order.id = orderDirection;
+    }
+
     const [data, total] = await this.priceListItemRepository.findAndCount({
       where,
-      order: { [sortField]: query.order ?? 'DESC' },
+      order,
       skip: (page - 1) * limit,
       take: limit,
     });
@@ -115,6 +131,7 @@ export class PriceListItemsService {
   private async assertNoOverlap(
     priceListId: string,
     productVariantId: string,
+    uomId: string | null,
     validFrom: Date,
     validTo: Date | null,
     excludeId?: string,
@@ -138,6 +155,7 @@ export class PriceListItemsService {
 
     const overlapping = candidates.find((row) => {
       if (excludeId && row.id === excludeId) return false;
+      if ((row.uomId ?? null) !== uomId) return false;
       const rowStart = row.validFrom.getTime();
       const rowEnd = row.validTo ? row.validTo.getTime() : Infinity;
       const newStart = validFrom.getTime();
@@ -164,10 +182,16 @@ export class PriceListItemsService {
     );
 
     // Variant must belong to the same company as the PriceList (Phase 10 §Price List Rules, LOCKED).
-    await this.productVariantsService.findByIdInCompany(
+    const variant = await this.productVariantsService.findByIdInCompany(
       dto.productVariantId,
       companyId,
     );
+    const resolvedUomId =
+      await this.productVariantUomsService.resolveSupportedUomId(
+        variant,
+        companyId,
+        dto.uomId,
+      );
 
     this.assertPositivePrice(dto.price);
 
@@ -178,6 +202,7 @@ export class PriceListItemsService {
     await this.assertNoOverlap(
       priceListId,
       dto.productVariantId,
+      resolvedUomId,
       validFrom,
       validTo,
     );
@@ -186,6 +211,7 @@ export class PriceListItemsService {
       priceListId,
       productVariantId: dto.productVariantId,
       companyId: priceList.companyId,
+      uomId: resolvedUomId,
       price: dto.price,
       validFrom,
       validTo,
@@ -213,6 +239,7 @@ export class PriceListItemsService {
       await this.assertNoOverlap(
         item.priceListId,
         item.productVariantId,
+        item.uomId ?? null,
         item.validFrom,
         nextValidTo,
         id,
@@ -234,5 +261,38 @@ export class PriceListItemsService {
   async remove(id: string, companyId: string): Promise<void> {
     const item = await this.findByIdInCompany(id, companyId);
     await this.priceListItemRepository.softRemove(item);
+  }
+
+  async resolveActivePrice(
+    companyId: string,
+    priceListId: string,
+    productVariantId: string,
+    uomId: string | null,
+    at: Date,
+  ): Promise<PriceListItem | null> {
+    const rows = await this.priceListItemRepository.find({
+      where: {
+        companyId,
+        priceListId,
+        productVariantId,
+        status: PriceListItemStatus.Active,
+      },
+      order: { validFrom: 'DESC' },
+    });
+
+    return (
+      rows.find((row) => {
+        if ((row.uomId ?? null) !== (uomId ?? null)) {
+          return false;
+        }
+        if (row.validFrom.getTime() > at.getTime()) {
+          return false;
+        }
+        if (row.validTo && row.validTo.getTime() <= at.getTime()) {
+          return false;
+        }
+        return true;
+      }) ?? null
+    );
   }
 }

@@ -25,6 +25,7 @@ import { StockTransfer } from '../entities/stock-transfer.entity';
 import { StockAdjustment } from '../entities/stock-adjustment.entity';
 import { StockMovementReferenceType } from '../entities/stock-movement-reference-type.enum';
 import { SaleReturn } from '../../sales-returns/entities/sale-return.entity';
+import { PurchaseReturn } from '../../purchase/entities/purchase-return.entity';
 
 export interface PaginatedStockMovements {
   data: StockMovement[];
@@ -99,6 +100,8 @@ export class InventoryLedgerService {
     private readonly stockAdjustmentRepository: Repository<StockAdjustment>,
     @InjectRepository(SaleReturn)
     private readonly saleReturnRepository: Repository<SaleReturn>,
+    @InjectRepository(PurchaseReturn)
+    private readonly purchaseReturnRepository: Repository<PurchaseReturn>,
   ) {}
 
   async findAllView(
@@ -435,6 +438,12 @@ export class InventoryLedgerService {
         StockMovementReferenceType.SaleReturn,
         byType.get(StockMovementReferenceType.SaleReturn),
         this.saleReturnRepository,
+        'returnNumber',
+      ),
+      this.loadReferencePairs(
+        StockMovementReferenceType.PurchaseReturn,
+        byType.get(StockMovementReferenceType.PurchaseReturn),
+        this.purchaseReturnRepository,
         'returnNumber',
       ),
     ]);

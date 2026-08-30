@@ -10,6 +10,7 @@ export interface SupplierResponseDto {
   displayName: string | null;
   phone: string | null;
   email: string | null;
+  country: string | null;
   supplierGroupId: string | null;
   paymentTermId: string | null;
   creditDays: number;
@@ -33,6 +34,7 @@ export function toSupplierResponseDto(entity: Supplier): SupplierResponseDto {
     displayName: entity.displayName,
     phone: entity.phone,
     email: entity.email,
+    country: entity.country,
     supplierGroupId: entity.supplierGroupId,
     paymentTermId: entity.paymentTermId,
     creditDays: entity.creditDays,

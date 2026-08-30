@@ -25,6 +25,7 @@ import { Product } from '../modules/products/entities/product.entity';
 import { ProductVariant } from '../modules/products/entities/product-variant.entity';
 import { ProductVariantAttribute } from '../modules/products/entities/product-variant-attribute.entity';
 import { ProductVariantBarcode } from '../modules/products/entities/product-variant-barcode.entity';
+import { ProductVariantUom } from '../modules/products/entities/product-variant-uom.entity';
 import { PriceList } from '../modules/products/entities/price-list.entity';
 import { PriceListItem } from '../modules/products/entities/price-list-item.entity';
 import { Customer } from '../modules/customer-supplier/entities/customer.entity';
@@ -42,6 +43,19 @@ import { CompanySaleCounter } from '../modules/sales/entities/company-sale-count
 import { PurchaseOrder } from '../modules/purchase/entities/purchase-order.entity';
 import { PurchaseOrderItem } from '../modules/purchase/entities/purchase-order-item.entity';
 import { CompanyPurchaseCounter } from '../modules/purchase/entities/company-purchase-counter.entity';
+import { CompanyPurchaseRequestCounter } from '../modules/purchase/entities/company-purchase-request-counter.entity';
+import { CompanyPurchaseReturnCounter } from '../modules/purchase/entities/company-purchase-return-counter.entity';
+import { CompanyPurchaseRfqCounter } from '../modules/purchase/entities/company-purchase-rfq-counter.entity';
+import { CompanySupplierQuotationCounter } from '../modules/purchase/entities/company-supplier-quotation-counter.entity';
+import { PurchaseRequest } from '../modules/purchase/entities/purchase-request.entity';
+import { PurchaseRequestItem } from '../modules/purchase/entities/purchase-request-item.entity';
+import { PurchaseInvoice } from '../modules/purchase/entities/purchase-invoice.entity';
+import { PurchaseReturn } from '../modules/purchase/entities/purchase-return.entity';
+import { PurchaseReturnItem } from '../modules/purchase/entities/purchase-return-item.entity';
+import { PurchaseRfq } from '../modules/purchase/entities/purchase-rfq.entity';
+import { PurchaseRfqItem } from '../modules/purchase/entities/purchase-rfq-item.entity';
+import { SupplierQuotation } from '../modules/purchase/entities/supplier-quotation.entity';
+import { SupplierQuotationItem } from '../modules/purchase/entities/supplier-quotation-item.entity';
 import { WarehouseStock } from '../modules/inventory/entities/warehouse-stock.entity';
 import { StockMovement } from '../modules/inventory/entities/stock-movement.entity';
 import { GoodsReceipt } from '../modules/inventory/entities/goods-receipt.entity';
@@ -97,6 +111,7 @@ import { AiConversation } from '../modules/ai-assistant/entities/ai-conversation
 import { AiMessage } from '../modules/ai-assistant/entities/ai-message.entity';
 import { AiKnowledgeDocument } from '../modules/ai-assistant/entities/ai-knowledge-document.entity';
 import { AiKnowledgeChunk } from '../modules/ai-assistant/entities/ai-knowledge-chunk.entity';
+import { Uom } from '../modules/uom/entities/uom.entity';
 
 /**
  * Entities are imported explicitly rather than discovered via a glob.
@@ -133,8 +148,10 @@ const entities = [
   ProductVariant,
   ProductVariantAttribute,
   ProductVariantBarcode,
+  ProductVariantUom,
   PriceList,
   PriceListItem,
+  Uom,
   Customer,
   Supplier,
   CustomerGroup,
@@ -150,6 +167,19 @@ const entities = [
   PurchaseOrder,
   PurchaseOrderItem,
   CompanyPurchaseCounter,
+  CompanyPurchaseRequestCounter,
+  CompanyPurchaseReturnCounter,
+  CompanyPurchaseRfqCounter,
+  CompanySupplierQuotationCounter,
+  PurchaseRequest,
+  PurchaseRequestItem,
+  PurchaseInvoice,
+  PurchaseReturn,
+  PurchaseReturnItem,
+  PurchaseRfq,
+  PurchaseRfqItem,
+  SupplierQuotation,
+  SupplierQuotationItem,
   WarehouseStock,
   StockMovement,
   GoodsReceipt,

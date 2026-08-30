@@ -7,6 +7,7 @@ import type {
   SalesByCustomerRow,
   SalesByBranchRow,
   SalesByProductRow,
+  SalesCustomerSummary,
 } from '../services/sales-reports.service';
 import { SalesReportQueryDto } from '../dto/sales-report-query.dto';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
@@ -97,6 +98,25 @@ export class SalesReportsController {
       query.branchId,
     );
     return this.salesReportsService.byCustomer(scope.companyId, {
+      ...query,
+      branchId: scope.branchId,
+      allowedBranchIds: scope.allowedBranchIds,
+    });
+  }
+
+  @Get('customer-summary')
+  @RequirePermission('reports.sales.read')
+  async customerSummary(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: SalesReportQueryDto,
+  ): Promise<SalesCustomerSummary> {
+    validateDateRange(query.fromDate, query.toDate);
+    const scope = await this.resolveScope(
+      user,
+      query.companyId,
+      query.branchId,
+    );
+    return this.salesReportsService.customerSummary(scope.companyId, {
       ...query,
       branchId: scope.branchId,
       allowedBranchIds: scope.allowedBranchIds,

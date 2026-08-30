@@ -35,6 +35,9 @@ export interface AppConfig {
    * hop) in production — that lets a client spoof X-Forwarded-For.
    */
   trustProxy: string | number | boolean;
+  rateLimitEnabled: boolean;
+  rateLimitMaxRequests: number;
+  rateLimitWindowSeconds: number;
 }
 
 export default registerAs('app', (): AppConfig => {
@@ -84,6 +87,15 @@ export default registerAs('app', (): AppConfig => {
       10,
     ),
     trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
+    rateLimitEnabled: process.env.RATE_LIMIT_ENABLED !== 'false',
+    rateLimitMaxRequests: parseInt(
+      process.env.RATE_LIMIT_MAX_REQUESTS ?? '300',
+      10,
+    ),
+    rateLimitWindowSeconds: parseInt(
+      process.env.RATE_LIMIT_WINDOW_SECONDS ?? '60',
+      10,
+    ),
   };
 });
 

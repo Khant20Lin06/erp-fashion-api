@@ -14,7 +14,10 @@ import { SupplierStatus } from '../../customer-supplier/entities/supplier-status
 import { PaymentTermsService } from '../../customer-supplier/services/payment-terms.service';
 import { PaymentTermStatus } from '../../customer-supplier/entities/payment-term-status.enum';
 import { ProductVariantsService } from '../../products/services/product-variants.service';
+import { ProductVariantUomsService } from '../../products/services/product-variant-uoms.service';
 import { ProductVariantStatus } from '../../products/entities/product-variant-status.enum';
+import { ProductVariantUomUsageType } from '../../products/entities/product-variant-uom-usage-type.enum';
+import { SupplierQuotationsService } from './supplier-quotations.service';
 import { CompanyStatus } from '../../organization/entities/company-status.enum';
 import { ErrorCode } from '../../../core/errors/error-codes';
 
@@ -42,6 +45,12 @@ describe('PurchaseOrdersService', () => {
   >;
   let productVariantsService: jest.Mocked<
     Pick<ProductVariantsService, 'findByIdInCompany'>
+  >;
+  let productVariantUomsService: jest.Mocked<
+    Pick<ProductVariantUomsService, 'resolveSelectionForUsage'>
+  >;
+  let supplierQuotationsService: jest.Mocked<
+    Pick<SupplierQuotationsService, 'findAwardedByIdInCompany'>
   >;
   let queryBuilder: jest.Mocked<
     Pick<
@@ -160,6 +169,12 @@ describe('PurchaseOrdersService', () => {
     suppliersService = { findByIdInCompany: jest.fn() };
     paymentTermsService = { findByIdInCompany: jest.fn() };
     productVariantsService = { findByIdInCompany: jest.fn() };
+    productVariantUomsService = {
+      resolveSelectionForUsage: jest.fn().mockResolvedValue(null),
+    };
+    supplierQuotationsService = {
+      findAwardedByIdInCompany: jest.fn(),
+    };
 
     service = new PurchaseOrdersService(
       purchaseOrderRepository as unknown as Repository<PurchaseOrder>,
@@ -171,6 +186,8 @@ describe('PurchaseOrdersService', () => {
       suppliersService as unknown as SuppliersService,
       paymentTermsService as unknown as PaymentTermsService,
       productVariantsService as unknown as ProductVariantsService,
+      productVariantUomsService as unknown as ProductVariantUomsService,
+      supplierQuotationsService as unknown as SupplierQuotationsService,
     );
   });
 
@@ -379,6 +396,46 @@ describe('PurchaseOrdersService', () => {
     it('defaults currency-agnostic purchaseType to STANDARD when omitted', async () => {
       const result = await service.create('company-a', 'user-1', baseDto);
       expect(result.purchaseType).toBe('STANDARD');
+    });
+
+    it('snapshots alternate purchase UOM selections and converted base quantity', async () => {
+      const created: Record<string, unknown>[] = [];
+      manager.create.mockImplementation(
+        (_entity: unknown, data: Record<string, unknown>) => {
+          created.push(data);
+          return data;
+        },
+      );
+      productVariantUomsService.resolveSelectionForUsage.mockResolvedValue({
+        uomId: 'uom-carton',
+        code: 'CTN',
+        name: 'Carton',
+        symbol: null,
+        conversionFactorToBase: '24.0000',
+        usageType: ProductVariantUomUsageType.Purchase,
+        isBase: false,
+      });
+
+      await service.create('company-a', 'user-1', {
+        ...baseDto,
+        items: [
+          {
+            productVariantId: 'variant-1',
+            uomId: 'uom-carton',
+            quantity: 2,
+            unitCost: '400.00',
+          },
+        ],
+      } as never);
+
+      const itemPayload = created.find((row) => row.uomId === 'uom-carton');
+      expect(itemPayload).toMatchObject({
+        uomId: 'uom-carton',
+        uomCodeSnapshot: 'CTN',
+        quantity: 2,
+        baseQuantitySnapshot: 48,
+        conversionFactorToBaseSnapshot: '24.0000',
+      });
     });
   });
 

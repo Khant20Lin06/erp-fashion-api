@@ -4,6 +4,10 @@ export class CreatePriceListItemDto {
   @IsUUID()
   productVariantId!: string;
 
+  @IsOptional()
+  @IsUUID()
+  uomId?: string;
+
   @IsNumberString()
   price!: string;
 

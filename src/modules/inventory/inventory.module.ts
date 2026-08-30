@@ -30,6 +30,7 @@ import { ProductVariantAttribute } from '../products/entities/product-variant-at
 import { User } from '../users/entities/user.entity';
 import { Sale } from '../sales/entities/sale.entity';
 import { SaleReturn } from '../sales-returns/entities/sale-return.entity';
+import { PurchaseReturn } from '../purchase/entities/purchase-return.entity';
 
 /**
  * Phase 14 — Inventory. A single flat module directory
@@ -69,6 +70,7 @@ import { SaleReturn } from '../sales-returns/entities/sale-return.entity';
       User,
       Sale,
       SaleReturn,
+      PurchaseReturn,
     ]),
     AuthModule,
     RbacModule,

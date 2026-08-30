@@ -11,9 +11,14 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { SalesService } from '../services/sales.service';
+import {
+  SaleItemPricingPreview,
+  SalesPriceListOption,
+  SalesService,
+} from '../services/sales.service';
 import { CreateSaleDto } from '../dto/create-sale.dto';
 import { ListSalesDto } from '../dto/list-sales.dto';
+import { PreviewSaleItemPricingDto } from '../dto/preview-sale-item-pricing.dto';
 import { SaleResponseDto, toSaleResponseDto } from '../dto/sale-response.dto';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../rbac/guards/permission.guard';
@@ -60,6 +65,21 @@ export class SalesController {
     );
     const result = await this.salesService.findAll(companyId, query);
     return { data: result.data.map(toSaleResponseDto), meta: result.meta };
+  }
+
+  @Get('pricing/price-lists')
+  @RequirePermission('sales.create')
+  async listActivePriceLists(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('companyId') companyIdQuery?: string,
+  ): Promise<SalesPriceListOption[]> {
+    const companyId = await resolveRequestCompanyId(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+    );
+    return this.salesService.listActivePriceLists(companyId);
   }
 
   @Get(':id')
@@ -117,6 +137,21 @@ export class SalesController {
 
     const entity = await this.salesService.create(companyId, user.id, dto);
     return toSaleResponseDto(entity);
+  }
+
+  @Post('pricing/preview')
+  @RequirePermission('sales.create')
+  async previewItemPricing(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: PreviewSaleItemPricingDto,
+  ): Promise<SaleItemPricingPreview> {
+    const companyId = await resolveRequestCompanyId(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      dto.companyId,
+    );
+    return this.salesService.previewItemPricing(companyId, dto);
   }
 
   @Post(':id/confirm')

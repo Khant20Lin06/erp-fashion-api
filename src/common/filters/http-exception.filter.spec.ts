@@ -1,4 +1,9 @@
-import { ArgumentsHost, BadRequestException, HttpStatus } from '@nestjs/common';
+import {
+  ArgumentsHost,
+  BadRequestException,
+  HttpStatus,
+  NotFoundException,
+} from '@nestjs/common';
 import { GlobalExceptionFilter } from './http-exception.filter';
 import { REQUEST_ID_HEADER } from '../middleware/request-id.middleware';
 
@@ -17,9 +22,14 @@ describe('GlobalExceptionFilter', () => {
   let mockJson: jest.Mock<void, [ErrorResponseBody]>;
   let mockStatus: jest.Mock;
   let mockHost: ArgumentsHost;
+  let mockLogger: { warn: jest.Mock; error: jest.Mock };
 
   beforeEach(() => {
-    filter = new GlobalExceptionFilter();
+    mockLogger = {
+      warn: jest.fn(),
+      error: jest.fn(),
+    };
+    filter = new GlobalExceptionFilter(mockLogger);
     mockJson = jest.fn<void, [ErrorResponseBody]>();
     mockStatus = jest.fn().mockReturnValue({ json: mockJson });
 
@@ -52,6 +62,12 @@ describe('GlobalExceptionFilter', () => {
         requestId: 'test-request-id',
       }),
     );
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Client exception on GET /api/v1/example [test-request-id] status=400 code=VALIDATION_ERROR message="Invalid input"',
+      ),
+    );
+    expect(mockLogger.error).not.toHaveBeenCalled();
   });
 
   it('should map unknown errors to 500 without leaking internal details', () => {
@@ -65,6 +81,13 @@ describe('GlobalExceptionFilter', () => {
     expect(body.message).toBe('Internal server error');
     expect(body.message).not.toContain('database connection string');
     expect(body).not.toHaveProperty('stack');
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Unhandled exception on GET /api/v1/example [test-request-id] status=500 code=INTERNAL_ERROR',
+      ),
+      exception.stack,
+    );
+    expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
   it('should fall back to "unknown" requestId when header is missing', () => {
@@ -84,5 +107,12 @@ describe('GlobalExceptionFilter', () => {
 
     const body = mockJson.mock.calls[0][0];
     expect(body.requestId).toBe('unknown');
+  });
+
+  it('does not warn-log plain not found responses', () => {
+    filter.catch(new NotFoundException('Missing route'), mockHost);
+
+    expect(mockLogger.warn).not.toHaveBeenCalled();
+    expect(mockLogger.error).not.toHaveBeenCalled();
   });
 });

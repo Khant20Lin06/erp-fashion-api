@@ -4,6 +4,7 @@ import { Logger } from '@nestjs/common';
 import { Logger as PinoLogger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { AppConfig } from './config/app.config';
+import { logBootstrapFailure } from './common/logging/bootstrap-error';
 import {
   configureApplication,
   registerSwagger,
@@ -43,6 +44,6 @@ async function bootstrap(): Promise<void> {
 }
 
 bootstrap().catch((error: unknown) => {
-  console.error('Fatal error during application bootstrap', error);
+  logBootstrapFailure(error);
   process.exit(1);
 });

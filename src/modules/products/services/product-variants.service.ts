@@ -4,6 +4,8 @@ import { Brackets, EntityManager, Repository } from 'typeorm';
 import { ProductVariant } from '../entities/product-variant.entity';
 import { ProductVariantStatus } from '../entities/product-variant-status.enum';
 import { ProductVariantAttribute } from '../entities/product-variant-attribute.entity';
+import { ProductVariantUom } from '../entities/product-variant-uom.entity';
+import { ProductVariantUomUsageType } from '../entities/product-variant-uom-usage-type.enum';
 import { CreateProductVariantDto } from '../dto/create-product-variant.dto';
 import { UpdateProductVariantDto } from '../dto/update-product-variant.dto';
 import { ListProductVariantsDto } from '../dto/list-product-variants.dto';
@@ -20,6 +22,9 @@ import {
 } from '../../../shared/dto/pagination.dto';
 import { resolveSortField } from '../../../shared/dto/resolve-sort-field';
 import { computeCombinationKey } from '../utils/combination-key';
+import { PurchaseOrderItem } from '../../purchase/entities/purchase-order-item.entity';
+import { PurchaseOrderStatus } from '../../purchase/entities/purchase-order-status.enum';
+import { Uom } from '../../uom/entities/uom.entity';
 
 export interface PaginatedProductVariants {
   data: ProductVariant[];
@@ -35,6 +40,12 @@ export class ProductVariantsService {
     private readonly variantRepository: Repository<ProductVariant>,
     @InjectRepository(ProductVariantAttribute)
     private readonly variantAttributeRepository: Repository<ProductVariantAttribute>,
+    @InjectRepository(ProductVariantUom)
+    private readonly variantUomRepository: Repository<ProductVariantUom>,
+    @InjectRepository(PurchaseOrderItem)
+    private readonly purchaseOrderItemRepository: Repository<PurchaseOrderItem>,
+    @InjectRepository(Uom)
+    private readonly uomRepository: Repository<Uom>,
     private readonly productsService: ProductsService,
     private readonly attributeOptionsService: AttributeOptionsService,
     private readonly transactionService: TransactionService,
@@ -174,6 +185,50 @@ export class ProductVariantsService {
     }
   }
 
+  private async resolveBaseUom(
+    companyId: string,
+    baseUomId?: string,
+  ): Promise<Uom | null> {
+    if (!baseUomId) {
+      return null;
+    }
+
+    const uom = await this.uomRepository.findOne({
+      where: { id: baseUomId, companyId },
+    });
+    if (!uom || !uom.isActive) {
+      throw new AppException(
+        ErrorCode.ValidationError,
+        'baseUomId must reference an active UOM in this company',
+      );
+    }
+
+    return uom;
+  }
+
+  private async assertNotLinkedToOpenPurchaseOrder(
+    companyId: string,
+    variantId: string,
+  ): Promise<void> {
+    const linkedItems = await this.purchaseOrderItemRepository.find({
+      where: { productVariantId: variantId },
+      relations: { purchaseOrder: true },
+    });
+
+    const blockingItem = linkedItems.find(
+      (item) =>
+        item.purchaseOrder?.companyId === companyId &&
+        item.purchaseOrder.status !== PurchaseOrderStatus.Cancelled,
+    );
+
+    if (blockingItem) {
+      throw new AppException(
+        ErrorCode.Conflict,
+        'Cannot delete a product variant referenced by an open purchase order',
+      );
+    }
+  }
+
   async create(
     productId: string,
     companyId: string,
@@ -185,6 +240,7 @@ export class ProductVariantsService {
       companyId,
       dto.attributes,
     );
+    const baseUom = await this.resolveBaseUom(companyId, dto.baseUomId);
 
     const existingCombination = await this.variantRepository.findOne({
       where: { productId, combinationKey },
@@ -206,9 +262,26 @@ export class ProductVariantsService {
         combinationKey,
         costPrice: dto.costPrice,
         sellingPrice: dto.sellingPrice,
+        baseUomId: baseUom?.id ?? null,
         status: ProductVariantStatus.Active,
       });
       const savedVariant = await manager.save(ProductVariant, variant);
+
+      if (baseUom) {
+        await manager.save(
+          ProductVariantUom,
+          manager.create(ProductVariantUom, {
+            variantId: savedVariant.id,
+            companyId,
+            uomId: baseUom.id,
+            conversionFactorToBase: '1.0000',
+            usageType: ProductVariantUomUsageType.Both,
+            barcode: null,
+            isBase: true,
+            isActive: true,
+          }),
+        );
+      }
 
       for (const attribute of attributes) {
         await manager.save(
@@ -294,6 +367,13 @@ export class ProductVariantsService {
    */
   async remove(id: string, companyId: string): Promise<void> {
     const variant = await this.findByIdInCompany(id, companyId);
+    await this.assertNotLinkedToOpenPurchaseOrder(companyId, id);
+    const mappings = await this.variantUomRepository.find({
+      where: { variantId: id, companyId },
+    });
+    if (mappings.length > 0) {
+      await this.variantUomRepository.softRemove(mappings);
+    }
     await this.variantRepository.softRemove(variant);
   }
 }

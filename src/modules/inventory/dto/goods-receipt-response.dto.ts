@@ -6,8 +6,14 @@ export interface GoodsReceiptItemResponseDto {
   goodsReceiptId: string;
   purchaseOrderItemId: string;
   productVariantId: string;
+  uomId: string | null;
+  uomCodeSnapshot: string | null;
+  uomNameSnapshot: string | null;
   receivedQuantity: number;
   rejectedQuantity: number;
+  conversionFactorToBaseSnapshot: string;
+  baseReceivedQuantity: number;
+  baseRejectedQuantity: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -20,8 +26,14 @@ export function toGoodsReceiptItemResponseDto(
     goodsReceiptId: entity.goodsReceiptId,
     purchaseOrderItemId: entity.purchaseOrderItemId,
     productVariantId: entity.productVariantId,
+    uomId: entity.uomId,
+    uomCodeSnapshot: entity.uomCodeSnapshot,
+    uomNameSnapshot: entity.uomNameSnapshot,
     receivedQuantity: entity.receivedQuantity,
     rejectedQuantity: entity.rejectedQuantity,
+    conversionFactorToBaseSnapshot: entity.conversionFactorToBaseSnapshot,
+    baseReceivedQuantity: entity.baseReceivedQuantity,
+    baseRejectedQuantity: entity.baseRejectedQuantity,
     createdAt: entity.createdAt,
     updatedAt: entity.updatedAt,
   };

@@ -5,6 +5,7 @@ import { PriceListItemStatus } from '../entities/price-list-item-status.enum';
 import { PriceListsService } from './price-lists.service';
 import { PriceList } from '../entities/price-list.entity';
 import { ProductVariantsService } from './product-variants.service';
+import { ProductVariantUomsService } from './product-variant-uoms.service';
 import { ErrorCode } from '../../../core/errors/error-codes';
 
 describe('PriceListItemsService', () => {
@@ -21,6 +22,9 @@ describe('PriceListItemsService', () => {
   let productVariantsService: jest.Mocked<
     Pick<ProductVariantsService, 'findByIdInCompany'>
   >;
+  let productVariantUomsService: jest.Mocked<
+    Pick<ProductVariantUomsService, 'resolveSupportedUomId'>
+  >;
 
   const buildPriceList = (overrides: Partial<PriceList> = {}): PriceList =>
     ({ id: 'price-list-1', companyId: 'company-a', ...overrides }) as PriceList;
@@ -31,6 +35,7 @@ describe('PriceListItemsService', () => {
       priceListId: 'price-list-1',
       productVariantId: 'variant-1',
       companyId: 'company-a',
+      uomId: 'uom-1',
       price: '20.00',
       validFrom: new Date('2026-01-01T00:00:00Z'),
       validTo: null,
@@ -51,19 +56,27 @@ describe('PriceListItemsService', () => {
       findByIdInCompany: jest.fn().mockResolvedValue(buildPriceList()),
     };
     productVariantsService = {
-      findByIdInCompany: jest.fn().mockResolvedValue({ id: 'variant-1' }),
+      findByIdInCompany: jest.fn().mockResolvedValue({
+        id: 'variant-1',
+        baseUomId: 'uom-1',
+      }),
+    };
+    productVariantUomsService = {
+      resolveSupportedUomId: jest.fn().mockResolvedValue('uom-1'),
     };
 
     service = new PriceListItemsService(
       priceListItemRepository as unknown as Repository<PriceListItem>,
       priceListsService as unknown as PriceListsService,
       productVariantsService as unknown as ProductVariantsService,
+      productVariantUomsService as unknown as ProductVariantUomsService,
     );
   });
 
   describe('create', () => {
     const dto = {
       productVariantId: 'variant-1',
+      uomId: 'uom-1',
       price: '20.00',
       validFrom: '2026-01-01T00:00:00Z',
     };
@@ -81,6 +94,7 @@ describe('PriceListItemsService', () => {
         'variant-1',
         'company-a',
       );
+      expect(productVariantUomsService.resolveSupportedUomId).toHaveBeenCalled();
     });
 
     it('rejects a variant belonging to a different company', async () => {
@@ -186,6 +200,24 @@ describe('PriceListItemsService', () => {
     });
   });
 
+  describe('findAllForPriceList', () => {
+    it('uses a stable secondary order for pagination when many rows share the same validFrom', async () => {
+      priceListItemRepository.findAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAllForPriceList('price-list-1', 'company-a', {});
+
+      expect(priceListItemRepository.findAndCount).toHaveBeenCalledWith(
+        expect.objectContaining({
+          order: {
+            validFrom: 'DESC',
+            createdAt: 'DESC',
+            id: 'DESC',
+          },
+        }),
+      );
+    });
+  });
+
   describe('remove', () => {
     it('soft-deletes the price list item', async () => {
       const item = buildItem();
@@ -194,6 +226,24 @@ describe('PriceListItemsService', () => {
       await service.remove('item-1', 'company-a');
 
       expect(priceListItemRepository.softRemove).toHaveBeenCalledWith(item);
+    });
+  });
+
+  describe('resolveActivePrice', () => {
+    it('resolves the active price using priceList + variant + uom + date', async () => {
+      priceListItemRepository.find.mockResolvedValue([
+        buildItem({ uomId: 'uom-box', price: '120.00' }),
+      ]);
+
+      const item = await service.resolveActivePrice(
+        'company-a',
+        'price-list-1',
+        'variant-1',
+        'uom-box',
+        new Date('2026-02-01T00:00:00Z'),
+      );
+
+      expect(item?.price).toBe('120.00');
     });
   });
 });

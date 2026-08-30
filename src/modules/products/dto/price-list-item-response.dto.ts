@@ -6,6 +6,7 @@ export interface PriceListItemResponseDto {
   priceListId: string;
   productVariantId: string;
   companyId: string;
+  uomId: string | null;
   price: string;
   validFrom: Date;
   validTo: Date | null;
@@ -22,6 +23,7 @@ export function toPriceListItemResponseDto(
     priceListId: item.priceListId,
     productVariantId: item.productVariantId,
     companyId: item.companyId,
+    uomId: item.uomId,
     price: item.price,
     validFrom: item.validFrom,
     validTo: item.validTo,

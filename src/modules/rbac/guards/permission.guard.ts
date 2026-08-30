@@ -25,6 +25,12 @@ interface RequestWithUser extends Request {
  * only answers "can this user perform this action at all" — record-level
  * data visibility is a separate concern handled by DataScopeService in the
  * business-module layer, never merged into this guard (Phase 06 §2/§108).
+ *
+ * Deny-by-default (docs/SECURITY_RULES.md #1): a route protected by this
+ * guard but missing @RequirePermission/@RequireAnyPermission is rejected
+ * rather than silently allowed. A controller that only needs authentication
+ * (no permission check) must not apply PermissionGuard at all — see
+ * MyPermissionsController/AuthController, which use JwtAuthGuard alone.
  */
 @Injectable()
 export class PermissionGuard implements CanActivate {
@@ -40,11 +46,15 @@ export class PermissionGuard implements CanActivate {
       PermissionRequirement | undefined
     >(PERMISSION_METADATA_KEY, [context.getHandler(), context.getClass()]);
 
+    const request = context.switchToHttp().getRequest<RequestWithUser>();
+
     if (!requirement || requirement.codes.length === 0) {
-      return true;
+      this.logger.error(
+        `PermissionGuard applied without @RequirePermission/@RequireAnyPermission on ${request.method} ${request.originalUrl ?? request.url} — denying by default. Add the decorator, or remove PermissionGuard if only authentication is required.`,
+      );
+      throw new ForbiddenException('Insufficient permission');
     }
 
-    const request = context.switchToHttp().getRequest<RequestWithUser>();
     const userId = request.user?.id;
 
     if (!userId) {

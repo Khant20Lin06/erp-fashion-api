@@ -1,5 +1,9 @@
 import 'dotenv/config';
 import { AppDataSource } from '../data-source';
+import {
+  createScriptLogger,
+  logScriptFailure,
+} from '../../common/logging/script-logger';
 import { User } from '../../modules/users/entities/user.entity';
 import { UserStatus } from '../../modules/users/entities/user-status.enum';
 import { Role } from '../../modules/rbac/entities/role.entity';
@@ -8,12 +12,14 @@ import { SystemRoleCode } from '../../modules/rbac/entities/system-role-code';
 import { hash } from '@node-rs/argon2';
 import { v4 as uuidv4 } from 'uuid';
 
+const logger = createScriptLogger('CreateAdminSeed');
+
 async function createAdminUser() {
   await AppDataSource.initialize();
-  console.log('Database connected.');
+  logger.log('Database connected.');
 
   const email = 'admin@fashionerp.com';
-  const password = 'Admin12345!';
+  const password = 'Admin-12345678!';
 
   const userRepository = AppDataSource.getRepository(User);
   const roleRepository = AppDataSource.getRepository(Role);
@@ -34,12 +40,12 @@ async function createAdminUser() {
       isEmailVerified: true,
     });
     await userRepository.save(existingUser);
-    console.log(`Created admin user: ${email}`);
+    logger.log(`Created admin user: ${email}`);
   } else {
     existingUser.passwordHash = passwordHash;
     existingUser.status = UserStatus.Active;
     await userRepository.save(existingUser);
-    console.log(`Updated admin user password for: ${email}`);
+    logger.log(`Updated admin user password for: ${email}`);
   }
 
   const superAdminRole = await roleRepository.findOne({
@@ -58,15 +64,15 @@ async function createAdminUser() {
           roleId: superAdminRole.id,
         }),
       );
-      console.log('Assigned SUPER_ADMIN role to admin user.');
+      logger.log('Assigned SUPER_ADMIN role to admin user.');
     }
   }
 
   await AppDataSource.destroy();
-  console.log('Admin account setup complete!');
+  logger.log('Admin account setup complete!');
 }
 
 createAdminUser().catch((err) => {
-  console.error('Error creating admin user:', err);
+  logScriptFailure('Error creating admin user', err, logger);
   process.exit(1);
 });

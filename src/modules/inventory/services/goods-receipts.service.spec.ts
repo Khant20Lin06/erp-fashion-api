@@ -23,7 +23,14 @@ describe('GoodsReceiptsService', () => {
   let queryBuilder: jest.Mocked<
     Pick<
       SelectQueryBuilder<GoodsReceipt>,
-      'where' | 'andWhere' | 'orderBy' | 'skip' | 'take' | 'getManyAndCount'
+      | 'leftJoinAndSelect'
+      | 'where'
+      | 'andWhere'
+      | 'orderBy'
+      | 'distinct'
+      | 'skip'
+      | 'take'
+      | 'getManyAndCount'
     >
   >;
 
@@ -41,8 +48,8 @@ describe('GoodsReceiptsService', () => {
 
   // Separate mock query-builder chains: one for locking
   // PurchaseOrderItem, one for locking WarehouseStock, one for summing
-  // prior GoodsReceiptItem.receivedQuantity — distinguished by which
-  // entity class createQueryBuilder was invoked for.
+  // prior handled GoodsReceiptItem quantity (received + rejected) —
+  // distinguished by which entity class createQueryBuilder was invoked for.
   let poiQueryBuilder: {
     where: jest.Mock;
     andWhere: jest.Mock;
@@ -66,6 +73,7 @@ describe('GoodsReceiptsService', () => {
     ({
       id: 'wh-1',
       companyId: 'company-a',
+      branchId: 'branch-1',
       status: WarehouseStatus.Active,
       ...overrides,
     }) as never;
@@ -85,6 +93,11 @@ describe('GoodsReceiptsService', () => {
       purchaseOrderId: 'po-1',
       productVariantId: 'variant-1',
       quantity: 10,
+      conversionFactorToBaseSnapshot: '1.0000',
+      baseQuantitySnapshot: 10,
+      uomId: null,
+      uomCodeSnapshot: null,
+      uomNameSnapshot: null,
       ...overrides,
     }) as PurchaseOrderItem;
 
@@ -108,9 +121,11 @@ describe('GoodsReceiptsService', () => {
 
   beforeEach(() => {
     queryBuilder = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
+      distinct: jest.fn().mockReturnThis(),
       skip: jest.fn().mockReturnThis(),
       take: jest.fn().mockReturnThis(),
       getManyAndCount: jest.fn(),
@@ -207,6 +222,20 @@ describe('GoodsReceiptsService', () => {
     ],
   };
 
+  describe('findAll', () => {
+    it('joins receipt items so downstream workflow screens can compute received coverage', async () => {
+      queryBuilder.getManyAndCount.mockResolvedValue([[], 0]);
+
+      await service.findAll('company-a', { companyId: 'company-a' });
+
+      expect(queryBuilder.leftJoinAndSelect).toHaveBeenCalledWith(
+        'gr.items',
+        'items',
+      );
+      expect(queryBuilder.distinct).toHaveBeenCalledWith(true);
+    });
+  });
+
   describe('create', () => {
     it('rejects an inactive warehouse', async () => {
       warehousesService.findById.mockResolvedValue(
@@ -222,6 +251,43 @@ describe('GoodsReceiptsService', () => {
       warehousesService.findById.mockResolvedValue(
         buildWarehouse({ companyId: 'company-b' }),
       );
+
+      await expect(
+        service.create('company-a', 'user-1', baseDto as never),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.ValidationError });
+    });
+
+    it('rejects a warehouse outside the purchase order branch', async () => {
+      warehousesService.findById.mockResolvedValue(
+        buildWarehouse({ branchId: 'branch-other' }),
+      );
+      manager.findOne.mockImplementation((entity: unknown) => {
+        if (entity === PurchaseOrder)
+          return Promise.resolve(buildPurchaseOrder({ branchId: 'branch-1' }));
+        if (entity === ProductVariant) return Promise.resolve(buildVariant());
+        return Promise.resolve(null);
+      });
+
+      await expect(
+        service.create('company-a', 'user-1', baseDto as never),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.ValidationError });
+    });
+
+    it('rejects a warehouse that does not match the purchase order warehouse', async () => {
+      warehousesService.findById.mockResolvedValue(
+        buildWarehouse({ id: 'wh-other', branchId: 'branch-1' }),
+      );
+      manager.findOne.mockImplementation((entity: unknown) => {
+        if (entity === PurchaseOrder)
+          return Promise.resolve(
+            buildPurchaseOrder({
+              branchId: 'branch-1',
+              warehouseId: 'wh-1',
+            }),
+          );
+        if (entity === ProductVariant) return Promise.resolve(buildVariant());
+        return Promise.resolve(null);
+      });
 
       await expect(
         service.create('company-a', 'user-1', baseDto as never),
@@ -277,29 +343,138 @@ describe('GoodsReceiptsService', () => {
       ).rejects.toMatchObject({ errorCode: ErrorCode.ValidationError });
     });
 
-    it('rejects an inactive product variant', async () => {
+    it('allows receiving against a historical variant even if it was later archived or soft-deleted', async () => {
       manager.findOne.mockImplementation((entity: unknown) => {
         if (entity === PurchaseOrder)
           return Promise.resolve(buildPurchaseOrder());
         if (entity === ProductVariant)
           return Promise.resolve(
-            buildVariant({ status: ProductVariantStatus.Inactive }),
+            buildVariant({
+              status: ProductVariantStatus.Inactive,
+              deletedAt: new Date(),
+            }),
           );
+        if (entity === WarehouseStock)
+          return Promise.resolve(buildStock({ onHandQuantity: 5 }));
         return Promise.resolve(null);
       });
 
-      await expect(
-        service.create('company-a', 'user-1', baseDto as never),
-      ).rejects.toMatchObject({ errorCode: ErrorCode.ValidationError });
+      const result = await service.create('company-a', 'user-1', baseDto);
+      expect(result.receiptNumber).toMatch(/^GR-\d{4}-\d{6}$/);
     });
 
     it('rejects over-receiving beyond the remaining ordered quantity (409)', async () => {
       poiQueryBuilder.getOne.mockResolvedValue(buildPoi({ quantity: 10 }));
       sumQueryBuilder.getRawOne.mockResolvedValue({ total: '8' });
-      // remaining = 10 - 8 = 2, but requesting 5
+      // remaining = 10 - handled(8) = 2, but requesting 5
 
       await expect(
         service.create('company-a', 'user-1', baseDto as never),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.Conflict });
+    });
+
+    it('rejects when received + rejected exceeds the remaining quantity', async () => {
+      poiQueryBuilder.getOne.mockResolvedValue(buildPoi({ quantity: 10 }));
+      sumQueryBuilder.getRawOne.mockResolvedValue({ total: '8' });
+
+      await expect(
+        service.create('company-a', 'user-1', {
+          ...baseDto,
+          items: [
+            {
+              purchaseOrderItemId: 'poi-1',
+              productVariantId: 'variant-1',
+              receivedQuantity: 1,
+              rejectedQuantity: 2,
+            },
+          ],
+        } as never),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.Conflict });
+    });
+
+    it('rejects when neither received nor rejected quantity is provided', async () => {
+      await expect(
+        service.create('company-a', 'user-1', {
+          ...baseDto,
+          items: [
+            {
+              purchaseOrderItemId: 'poi-1',
+              productVariantId: 'variant-1',
+              receivedQuantity: 0,
+              rejectedQuantity: 0,
+            },
+          ],
+        } as never),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.ValidationError });
+    });
+
+    it('accepts a reject-only line item without creating stock movement', async () => {
+      const savedByEntity: Array<{
+        entity: unknown;
+        data: Record<string, unknown>;
+      }> = [];
+      manager.save.mockImplementation((entity: unknown, data: unknown) => {
+        savedByEntity.push({ entity, data: data as Record<string, unknown> });
+        return Promise.resolve(data);
+      });
+
+      const result = await service.create('company-a', 'user-1', {
+        ...baseDto,
+        items: [
+          {
+            purchaseOrderItemId: 'poi-1',
+            productVariantId: 'variant-1',
+            receivedQuantity: 0,
+            rejectedQuantity: 5,
+          },
+        ],
+      });
+
+      expect(result.receiptNumber).toMatch(/^GR-\d{4}-\d{6}$/);
+      expect(stockQueryBuilder.getOneOrFail).not.toHaveBeenCalled();
+      const movement = savedByEntity.find(
+        (s) =>
+          (s.data as { movementType?: string }).movementType ===
+          'PURCHASE_RECEIPT',
+      );
+      expect(movement).toBeUndefined();
+    });
+
+    it('treats prior rejected quantity as handled when computing remaining', async () => {
+      poiQueryBuilder.getOne.mockResolvedValue(buildPoi({ quantity: 10 }));
+      sumQueryBuilder.getRawOne.mockResolvedValue({ total: '8' });
+
+      await expect(
+        service.create('company-a', 'user-1', {
+          ...baseDto,
+          items: [
+            {
+              purchaseOrderItemId: 'poi-1',
+              productVariantId: 'variant-1',
+              receivedQuantity: 3,
+              rejectedQuantity: 0,
+            },
+          ],
+        } as never),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.Conflict });
+    });
+
+    it('blocks another reject-only receipt once a purchase-order line is fully handled', async () => {
+      poiQueryBuilder.getOne.mockResolvedValue(buildPoi({ quantity: 5 }));
+      sumQueryBuilder.getRawOne.mockResolvedValue({ total: '5' });
+
+      await expect(
+        service.create('company-a', 'user-1', {
+          ...baseDto,
+          items: [
+            {
+              purchaseOrderItemId: 'poi-1',
+              productVariantId: 'variant-1',
+              receivedQuantity: 0,
+              rejectedQuantity: 1,
+            },
+          ],
+        } as never),
       ).rejects.toMatchObject({ errorCode: ErrorCode.Conflict });
     });
 
@@ -359,6 +534,57 @@ describe('GoodsReceiptsService', () => {
     it('denormalizes supplierId from the PurchaseOrder onto the GoodsReceipt', async () => {
       const result = await service.create('company-a', 'user-1', baseDto);
       expect(result.supplierId).toBe('sup-1');
+    });
+
+    it('inherits the purchase-order line UOM snapshot and converts received quantity to base stock', async () => {
+      const created: Record<string, unknown>[] = [];
+      manager.create.mockImplementation(
+        (_entity: unknown, data: Record<string, unknown>) => {
+          created.push(data);
+          return data;
+        },
+      );
+      poiQueryBuilder.getOne.mockResolvedValue(
+        buildPoi({
+          quantity: 2,
+          baseQuantitySnapshot: 24,
+          conversionFactorToBaseSnapshot: '12.0000',
+          uomId: 'uom-box',
+          uomCodeSnapshot: 'BOX',
+          uomNameSnapshot: 'Box',
+        }),
+      );
+      const stock = buildStock({ onHandQuantity: 5 });
+      stockQueryBuilder.getOneOrFail.mockResolvedValue(stock);
+      manager.findOneOrFail.mockImplementation((entity: unknown) => {
+        if (entity === WarehouseStock) {
+          return Promise.resolve(buildStock({ onHandQuantity: 17 }));
+        }
+        return Promise.resolve(null);
+      });
+
+      await service.create('company-a', 'user-1', {
+        ...baseDto,
+        items: [
+          {
+            purchaseOrderItemId: 'poi-1',
+            productVariantId: 'variant-1',
+            receivedQuantity: 1,
+          },
+        ],
+      });
+
+      const receiptItemPayload = created.find((row) => row.uomId === 'uom-box');
+      expect(receiptItemPayload).toMatchObject({
+        uomId: 'uom-box',
+        uomCodeSnapshot: 'BOX',
+        receivedQuantity: 1,
+        baseReceivedQuantity: 12,
+        conversionFactorToBaseSnapshot: '12.0000',
+      });
+      expect(manager.update).toHaveBeenCalledWith(WarehouseStock, 'stock-1', {
+        onHandQuantity: 17,
+      });
     });
   });
 

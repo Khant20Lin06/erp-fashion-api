@@ -1,4 +1,8 @@
 import 'dotenv/config';
+import {
+  createScriptLogger,
+  logScriptFailure,
+} from '../../common/logging/script-logger';
 import { AppDataSource } from '../data-source';
 import { Company } from '../../modules/organization/entities/company.entity';
 import { CompanyStatus } from '../../modules/organization/entities/company-status.enum';
@@ -33,6 +37,8 @@ import { Sale } from '../../modules/sales/entities/sale.entity';
 import { SaleStatus } from '../../modules/sales/entities/sale-status.enum';
 import { SaleType } from '../../modules/sales/entities/sale-type.enum';
 import { SaleItem } from '../../modules/sales/entities/sale-item.entity';
+
+const logger = createScriptLogger('EnterpriseSeed');
 import { User } from '../../modules/users/entities/user.entity';
 import { UserCompany } from '../../modules/organization/entities/user-company.entity';
 import { MembershipStatus } from '../../modules/organization/entities/membership-status.enum';
@@ -55,7 +61,7 @@ async function findSeedRow<T extends object>(
 
 async function seedEnterpriseData() {
   await AppDataSource.initialize();
-  console.log('--- Connecting Database for Enterprise Data Seeding ---');
+  logger.log('--- Connecting Database for Enterprise Data Seeding ---');
 
   const companyRepo = AppDataSource.getRepository(Company);
   const branchRepo = AppDataSource.getRepository(Branch);
@@ -91,7 +97,7 @@ async function seedEnterpriseData() {
       address: 'No. 100, Pyay Road, Mayangone, Yangon',
     });
     company = await companyRepo.save(company);
-    console.log('Created Company:', company.name);
+    logger.log(`Created Company: ${company.name}`);
   }
 
   // Assign admin user to company
@@ -130,7 +136,7 @@ async function seedEnterpriseData() {
       address: 'Junction City, Level 2, Yangon',
     });
     branch = await branchRepo.save(branch);
-    console.log('Created Branch:', branch.name);
+    logger.log(`Created Branch: ${branch.name}`);
   }
 
   // 3. Warehouse
@@ -150,7 +156,7 @@ async function seedEnterpriseData() {
       address: 'Industrial Zone 1, Hlaing Tharyar, Yangon',
     });
     warehouse = await warehouseRepo.save(warehouse);
-    console.log('Created Warehouse:', warehouse.name);
+    logger.log(`Created Warehouse: ${warehouse.name}`);
   }
 
   // 4. Categories & Brands & Collections
@@ -265,7 +271,7 @@ async function seedEnterpriseData() {
       creditLimit: '1000.00',
     });
     customer = await customerRepo.save(customer);
-    console.log('Created Customer:', customer.name);
+    logger.log(`Created Customer: ${customer.name}`);
   }
 
   let supplier = await findSeedRow(supplierRepo, {
@@ -279,11 +285,12 @@ async function seedEnterpriseData() {
       supplierCode: 'SUPP-0001',
       name: 'Textile Global Mills Ltd.',
       email: 'orders@textileglobal.com',
+      country: 'Bangladesh',
       phone: '+95944455566',
       status: SupplierStatus.Active,
     });
     supplier = await supplierRepo.save(supplier);
-    console.log('Created Supplier:', supplier.name);
+    logger.log(`Created Supplier: ${supplier.name}`);
   }
 
   // 7. Price List
@@ -375,7 +382,7 @@ async function seedEnterpriseData() {
         status: ProductStatus.Active,
       });
       product = await productRepo.save(product);
-      console.log('Created Product:', product.name);
+      logger.log(`Created Product: ${product.name}`);
 
       for (const vData of pData.variants) {
         let variant = await findSeedRow(variantRepo, {
@@ -403,6 +410,7 @@ async function seedEnterpriseData() {
               priceListId: priceList.id,
               productVariantId: variant.id,
               price: vData.price,
+              validFrom: new Date('2026-01-01'),
               status: PriceListItemStatus.Active,
             }),
           );
@@ -475,15 +483,15 @@ async function seedEnterpriseData() {
           skuSnapshot: 'DJ-001-BLK-M',
         }),
       );
-      console.log('Created Sample Sale Order:', sale.saleNumber);
+      logger.log(`Created Sample Sale Order: ${sale.saleNumber}`);
     }
   }
 
   await AppDataSource.destroy();
-  console.log('🎉 Enterprise Data Seeding Completed Successfully!');
+  logger.log('Enterprise data seeding completed successfully.');
 }
 
 seedEnterpriseData().catch((err) => {
-  console.error('Enterprise Seeding Failed:', err);
+  logScriptFailure('Enterprise data seeding failed', err, logger);
   process.exit(1);
 });

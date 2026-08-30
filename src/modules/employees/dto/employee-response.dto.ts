@@ -1,5 +1,6 @@
 import { Employee } from '../entities/employee.entity';
 import { EmployeeStatus } from '../entities/employee-status.enum';
+import type { EmployeeWithCurrentAssignment } from '../services/employees.service';
 
 export interface EmployeeResponseDto {
   id: string;
@@ -21,9 +22,20 @@ export interface EmployeeResponseDto {
   terminatedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  assignmentId?: string | null;
+  departmentId?: string | null;
+  departmentName?: string | null;
+  designationId?: string | null;
+  designationName?: string | null;
+  branchName?: string | null;
+  assignmentEffectiveFrom?: string | null;
 }
 
-export function toEmployeeResponseDto(employee: Employee): EmployeeResponseDto {
+type EmployeeResponseSource = Employee & Partial<EmployeeWithCurrentAssignment>;
+
+export function toEmployeeResponseDto(
+  employee: EmployeeResponseSource,
+): EmployeeResponseDto {
   return {
     id: employee.id,
     employeeCode: employee.employeeCode,
@@ -44,5 +56,12 @@ export function toEmployeeResponseDto(employee: Employee): EmployeeResponseDto {
     terminatedAt: employee.terminatedAt,
     createdAt: employee.createdAt,
     updatedAt: employee.updatedAt,
+    assignmentId: employee.assignmentId ?? null,
+    departmentId: employee.departmentId ?? null,
+    departmentName: employee.departmentName ?? null,
+    designationId: employee.designationId ?? null,
+    designationName: employee.designationName ?? null,
+    branchName: employee.branchName ?? null,
+    assignmentEffectiveFrom: employee.assignmentEffectiveFrom ?? null,
   };
 }

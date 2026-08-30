@@ -103,6 +103,8 @@ export class AuthController {
 
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(AuthRateLimitGuard)
+  @AuthRateLimit('refresh')
   @ApiOperation({
     summary:
       'Exchange a valid refresh-token cookie for a new short-lived access token',

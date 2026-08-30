@@ -116,7 +116,10 @@ export interface SaleReturnResponseDto {
   companyId: string;
   branchId: string | null;
   saleId: string;
+  saleNumber: string | null;
+  saleWarehouseId: string | null;
   customerId: string;
+  customerName: string | null;
   returnNumber: string;
   status: SaleReturnStatus;
   reason: string | null;
@@ -143,7 +146,11 @@ export function toSaleReturnResponseDto(
     companyId: saleReturn.companyId,
     branchId: saleReturn.branchId,
     saleId: saleReturn.saleId,
+    saleNumber: saleReturn.sale?.saleNumber ?? null,
+    saleWarehouseId: saleReturn.sale?.warehouseId ?? null,
     customerId: saleReturn.customerId,
+    customerName:
+      saleReturn.customer?.displayName ?? saleReturn.customer?.name ?? null,
     returnNumber: saleReturn.returnNumber,
     status: saleReturn.status,
     reason: saleReturn.reason,

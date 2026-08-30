@@ -38,6 +38,11 @@ export class UpdateSupplierDto {
   email?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  country?: string;
+
+  @IsOptional()
   @IsUUID()
   supplierGroupId?: string;
 

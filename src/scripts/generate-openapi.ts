@@ -5,10 +5,16 @@ import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { configureApplication } from '../bootstrap/configure-app';
 import {
+  createScriptLogger,
+  logScriptFailure,
+} from '../common/logging/script-logger';
+import {
   buildOpenApiDocument,
   OPENAPI_OUTPUT_PATH,
   stableSerializeOpenApi,
 } from '../common/swagger/openapi';
+
+const logger = createScriptLogger('GenerateOpenApiScript');
 
 async function main(): Promise<void> {
   process.env.OPENAPI_GENERATION_MODE = 'true';
@@ -36,6 +42,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error('Failed to generate OpenAPI document', error);
+  logScriptFailure('Failed to generate OpenAPI document', error, logger);
   process.exit(1);
 });

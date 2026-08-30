@@ -21,4 +21,5 @@ export enum StockMovementType {
    * SaleReturnsService.confirm()).
    */
   SaleReturn = 'SALE_RETURN',
+  PurchaseReturn = 'PURCHASE_RETURN',
 }

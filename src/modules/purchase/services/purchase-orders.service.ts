@@ -9,6 +9,8 @@ import { PurchaseType } from '../entities/purchase-type.enum';
 import { CompanyPurchaseCounter } from '../entities/company-purchase-counter.entity';
 import { CreatePurchaseOrderDto } from '../dto/create-purchase-order.dto';
 import { ListPurchaseOrdersDto } from '../dto/list-purchase-orders.dto';
+import { RejectPurchaseOrderDto } from '../dto/reject-purchase-order.dto';
+import { ClosePurchaseOrderDto } from '../dto/close-purchase-order.dto';
 import { formatPurchaseOrderNumber } from '../utils/purchase-order-number';
 import { TransactionService } from '../../../core/transaction/transaction.service';
 import { CompaniesService } from '../../organization/services/companies.service';
@@ -20,8 +22,11 @@ import { SupplierStatus } from '../../customer-supplier/entities/supplier-status
 import { PaymentTermsService } from '../../customer-supplier/services/payment-terms.service';
 import { PaymentTermStatus } from '../../customer-supplier/entities/payment-term-status.enum';
 import { ProductVariantsService } from '../../products/services/product-variants.service';
+import { ProductVariantUomsService } from '../../products/services/product-variant-uoms.service';
 import { ProductVariant } from '../../products/entities/product-variant.entity';
 import { ProductVariantStatus } from '../../products/entities/product-variant-status.enum';
+import { ProductVariantUomUsageType } from '../../products/entities/product-variant-uom-usage-type.enum';
+import { SupplierQuotationsService } from './supplier-quotations.service';
 import { AppException } from '../../../core/errors/app.exception';
 import { ErrorCode } from '../../../core/errors/error-codes';
 import {
@@ -52,10 +57,21 @@ const SORTABLE_FIELDS = [
 const ALLOWED_TRANSITIONS: Record<PurchaseOrderStatus, PurchaseOrderStatus[]> =
   {
     [PurchaseOrderStatus.Draft]: [
+      PurchaseOrderStatus.Submitted,
+      PurchaseOrderStatus.Approved,
       PurchaseOrderStatus.Confirmed,
       PurchaseOrderStatus.Cancelled,
     ],
-    [PurchaseOrderStatus.Confirmed]: [],
+    [PurchaseOrderStatus.Submitted]: [
+      PurchaseOrderStatus.Approved,
+      PurchaseOrderStatus.Confirmed,
+      PurchaseOrderStatus.Rejected,
+      PurchaseOrderStatus.Cancelled,
+    ],
+    [PurchaseOrderStatus.Approved]: [PurchaseOrderStatus.Closed],
+    [PurchaseOrderStatus.Confirmed]: [PurchaseOrderStatus.Closed],
+    [PurchaseOrderStatus.Rejected]: [],
+    [PurchaseOrderStatus.Closed]: [],
     [PurchaseOrderStatus.Cancelled]: [],
   };
 
@@ -91,7 +107,31 @@ export class PurchaseOrdersService {
     private readonly suppliersService: SuppliersService,
     private readonly paymentTermsService: PaymentTermsService,
     private readonly productVariantsService: ProductVariantsService,
+    private readonly productVariantUomsService: ProductVariantUomsService,
+    private readonly supplierQuotationsService: SupplierQuotationsService,
   ) {}
+
+  private computeBaseQuantity(
+    quantity: number,
+    conversionFactorToBase: string,
+    fieldName: string,
+  ): number {
+    const rawBaseQuantity = quantity * Number(conversionFactorToBase);
+    const roundedBaseQuantity = Math.round(rawBaseQuantity);
+
+    if (
+      !Number.isFinite(rawBaseQuantity) ||
+      rawBaseQuantity <= 0 ||
+      Math.abs(rawBaseQuantity - roundedBaseQuantity) > 1e-9
+    ) {
+      throw new AppException(
+        ErrorCode.ValidationError,
+        `${fieldName} must convert to a whole positive base-unit quantity`,
+      );
+    }
+
+    return roundedBaseQuantity;
+  }
 
   async findAll(
     companyId: string,
@@ -317,6 +357,19 @@ export class PurchaseOrdersService {
     if (dto.paymentTermId) {
       await this.assertValidPaymentTerm(dto.paymentTermId, companyId);
     }
+    if (dto.sourceSupplierQuotationId) {
+      const quotation =
+        await this.supplierQuotationsService.findAwardedByIdInCompany(
+          dto.sourceSupplierQuotationId,
+          companyId,
+        );
+      if (quotation.supplierId !== dto.supplierId) {
+        throw new AppException(
+          ErrorCode.ValidationError,
+          'sourceSupplierQuotationId does not belong to the selected supplier',
+        );
+      }
+    }
 
     // ProductVariant existence/company-scope is validated up front (before
     // the transaction) so a bad variant id fails fast with the same
@@ -351,8 +404,13 @@ export class PurchaseOrdersService {
       let taxTotal = 0;
       const itemRows: Array<{
         productVariantId: string;
+        uomId: string | null;
+        uomCodeSnapshot: string | null;
+        uomNameSnapshot: string | null;
         quantity: number;
+        baseQuantitySnapshot: number;
         unitCostSnapshot: string;
+        conversionFactorToBaseSnapshot: string;
         discountSnapshot: string;
         taxSnapshot: string;
         lineTotal: string;
@@ -365,6 +423,18 @@ export class PurchaseOrdersService {
           where: { id: itemDto.productVariantId, companyId },
           relations: { product: true },
         });
+        const selectedUom =
+          await this.productVariantUomsService.resolveSelectionForUsage(
+            variant,
+            companyId,
+            ProductVariantUomUsageType.Purchase,
+            itemDto.uomId,
+          );
+        const baseQuantity = this.computeBaseQuantity(
+          itemDto.quantity,
+          selectedUom?.conversionFactorToBase ?? '1.0000',
+          `quantity for product variant ${itemDto.productVariantId}`,
+        );
 
         const unitCost = Number(itemDto.unitCost);
         const discount = Number(itemDto.discountAmount ?? '0');
@@ -391,8 +461,14 @@ export class PurchaseOrdersService {
 
         itemRows.push({
           productVariantId: itemDto.productVariantId,
+          uomId: selectedUom?.uomId ?? null,
+          uomCodeSnapshot: selectedUom?.code ?? null,
+          uomNameSnapshot: selectedUom?.name ?? null,
           quantity: itemDto.quantity,
+          baseQuantitySnapshot: baseQuantity,
           unitCostSnapshot: unitCost.toFixed(2),
+          conversionFactorToBaseSnapshot:
+            selectedUom?.conversionFactorToBase ?? '1.0000',
           discountSnapshot: discount.toFixed(2),
           taxSnapshot: tax.toFixed(2),
           lineTotal: lineTotal.toFixed(2),
@@ -411,6 +487,7 @@ export class PurchaseOrdersService {
         branchId: dto.branchId ?? null,
         warehouseId: dto.warehouseId ?? null,
         paymentTermId: dto.paymentTermId ?? null,
+        sourceSupplierQuotationId: dto.sourceSupplierQuotationId ?? null,
         transactionDate,
         expectedDeliveryDate: dto.expectedDeliveryDate
           ? new Date(dto.expectedDeliveryDate)
@@ -460,7 +537,94 @@ export class PurchaseOrdersService {
     }
   }
 
-  /** DRAFT -> CONFIRMED only. */
+  private isReleasedStatus(status: PurchaseOrderStatus): boolean {
+    return (
+      status === PurchaseOrderStatus.Approved ||
+      status === PurchaseOrderStatus.Confirmed
+    );
+  }
+
+  private async assertCloseable(
+    purchaseOrder: PurchaseOrder,
+    companyId: string,
+  ): Promise<void> {
+    const receipts = await this.goodsReceiptRepository.find({
+      where: { purchaseOrderId: purchaseOrder.id, companyId },
+      relations: { items: true },
+    });
+    if (receipts.length === 0) {
+      throw new AppException(
+        ErrorCode.Conflict,
+        'Cannot close a purchase order that has no goods receipts',
+      );
+    }
+
+    const handledByItemId = new Map<string, number>();
+    for (const receipt of receipts) {
+      for (const item of receipt.items ?? []) {
+        handledByItemId.set(
+          item.purchaseOrderItemId,
+          (handledByItemId.get(item.purchaseOrderItemId) ?? 0) +
+            item.receivedQuantity +
+            item.rejectedQuantity,
+        );
+      }
+    }
+
+    const hasOutstandingQuantity = (purchaseOrder.items ?? []).some(
+      (item) => (handledByItemId.get(item.id) ?? 0) < item.quantity,
+    );
+    if (hasOutstandingQuantity) {
+      throw new AppException(
+        ErrorCode.Conflict,
+        'Cannot close a purchase order that still has outstanding receipt quantities',
+      );
+    }
+
+    if (Number(purchaseOrder.balanceAmount) > 1e-9) {
+      throw new AppException(
+        ErrorCode.Conflict,
+        'Cannot close a purchase order with an outstanding payable balance',
+      );
+    }
+  }
+
+  async submit(
+    id: string,
+    companyId: string,
+    userId: string,
+  ): Promise<PurchaseOrder> {
+    const purchaseOrder = await this.findByIdInCompany(id, companyId);
+    this.assertTransitionAllowed(
+      purchaseOrder.status,
+      PurchaseOrderStatus.Submitted,
+    );
+    purchaseOrder.status = PurchaseOrderStatus.Submitted;
+    purchaseOrder.submittedAt = new Date();
+    purchaseOrder.submittedBy = userId;
+    purchaseOrder.updatedBy = userId;
+    return this.purchaseOrderRepository.save(purchaseOrder);
+  }
+
+  async approve(
+    id: string,
+    companyId: string,
+    userId: string,
+  ): Promise<PurchaseOrder> {
+    const purchaseOrder = await this.findByIdInCompany(id, companyId);
+    this.assertTransitionAllowed(
+      purchaseOrder.status,
+      PurchaseOrderStatus.Approved,
+    );
+    purchaseOrder.status = PurchaseOrderStatus.Approved;
+    purchaseOrder.submittedAt = purchaseOrder.submittedAt ?? new Date();
+    purchaseOrder.submittedBy = purchaseOrder.submittedBy ?? userId;
+    purchaseOrder.approvedAt = new Date();
+    purchaseOrder.approvedBy = userId;
+    purchaseOrder.updatedBy = userId;
+    return this.purchaseOrderRepository.save(purchaseOrder);
+  }
+
   async confirm(
     id: string,
     companyId: string,
@@ -472,6 +636,49 @@ export class PurchaseOrdersService {
       PurchaseOrderStatus.Confirmed,
     );
     purchaseOrder.status = PurchaseOrderStatus.Confirmed;
+    purchaseOrder.approvedAt = purchaseOrder.approvedAt ?? new Date();
+    purchaseOrder.approvedBy = purchaseOrder.approvedBy ?? userId;
+    purchaseOrder.submittedAt = purchaseOrder.submittedAt ?? new Date();
+    purchaseOrder.submittedBy = purchaseOrder.submittedBy ?? userId;
+    purchaseOrder.updatedBy = userId;
+    return this.purchaseOrderRepository.save(purchaseOrder);
+  }
+
+  async reject(
+    id: string,
+    companyId: string,
+    userId: string,
+    dto: RejectPurchaseOrderDto,
+  ): Promise<PurchaseOrder> {
+    const purchaseOrder = await this.findByIdInCompany(id, companyId);
+    this.assertTransitionAllowed(
+      purchaseOrder.status,
+      PurchaseOrderStatus.Rejected,
+    );
+    purchaseOrder.status = PurchaseOrderStatus.Rejected;
+    purchaseOrder.rejectedAt = new Date();
+    purchaseOrder.rejectedBy = userId;
+    purchaseOrder.rejectedReason = dto.reason;
+    purchaseOrder.updatedBy = userId;
+    return this.purchaseOrderRepository.save(purchaseOrder);
+  }
+
+  async close(
+    id: string,
+    companyId: string,
+    userId: string,
+    dto: ClosePurchaseOrderDto,
+  ): Promise<PurchaseOrder> {
+    const purchaseOrder = await this.findByIdInCompany(id, companyId);
+    this.assertTransitionAllowed(
+      purchaseOrder.status,
+      PurchaseOrderStatus.Closed,
+    );
+    await this.assertCloseable(purchaseOrder, companyId);
+    purchaseOrder.status = PurchaseOrderStatus.Closed;
+    purchaseOrder.closedAt = new Date();
+    purchaseOrder.closedBy = userId;
+    purchaseOrder.closeReason = dto.reason ?? null;
     purchaseOrder.updatedBy = userId;
     return this.purchaseOrderRepository.save(purchaseOrder);
   }
@@ -540,6 +747,13 @@ export class PurchaseOrdersService {
 
     if (!purchaseOrder) {
       throw new AppException(ErrorCode.NotFound, 'Purchase order not found');
+    }
+
+    if (!this.isReleasedStatus(purchaseOrder.status)) {
+      throw new AppException(
+        ErrorCode.Conflict,
+        'Payments can only be applied to an approved purchase order',
+      );
     }
 
     const currentPaid = Number(purchaseOrder.paidAmount);

@@ -150,6 +150,24 @@ export class Payment extends BaseEntity {
   @JoinColumn({ name: 'updated_by' })
   updatedByUser?: User | null;
 
+  @Column({ name: 'reversed_at', type: 'timestamp', nullable: true })
+  reversedAt!: Date | null;
+
+  @Column({ name: 'reversed_by', type: 'char', length: 36, nullable: true })
+  reversedBy!: string | null;
+
+  @Column({ name: 'reversal_reason', type: 'varchar', length: 500, nullable: true })
+  reversalReason!: string | null;
+
+  @Column({ name: 'reallocated_at', type: 'timestamp', nullable: true })
+  reallocatedAt!: Date | null;
+
+  @Column({ name: 'reallocated_by', type: 'char', length: 36, nullable: true })
+  reallocatedBy!: string | null;
+
+  @Column({ name: 'reallocation_reason', type: 'varchar', length: 500, nullable: true })
+  reallocationReason!: string | null;
+
   @OneToMany(() => PaymentAllocation, (allocation) => allocation.payment)
   allocations?: PaymentAllocation[];
 }

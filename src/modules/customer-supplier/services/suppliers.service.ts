@@ -19,6 +19,9 @@ import {
   DEFAULT_PAGE,
 } from '../../../shared/dto/pagination.dto';
 import { resolveSortField } from '../../../shared/dto/resolve-sort-field';
+import { PurchaseOrder } from '../../purchase/entities/purchase-order.entity';
+import { Payment } from '../../payments/entities/payment.entity';
+import { GoodsReceipt } from '../../inventory/entities/goods-receipt.entity';
 
 export interface PaginatedSuppliers {
   data: Supplier[];
@@ -38,6 +41,12 @@ export class SuppliersService {
   constructor(
     @InjectRepository(Supplier)
     private readonly supplierRepository: Repository<Supplier>,
+    @InjectRepository(PurchaseOrder)
+    private readonly purchaseOrderRepository: Repository<PurchaseOrder>,
+    @InjectRepository(Payment)
+    private readonly paymentRepository: Repository<Payment>,
+    @InjectRepository(GoodsReceipt)
+    private readonly goodsReceiptRepository: Repository<GoodsReceipt>,
     private readonly companiesService: CompaniesService,
     private readonly branchesService: BranchesService,
     private readonly supplierGroupsService: SupplierGroupsService,
@@ -200,6 +209,7 @@ export class SuppliersService {
       displayName: dto.displayName ?? null,
       phone: dto.phone ?? null,
       email: dto.email ?? null,
+      country: dto.country ?? null,
       supplierGroupId: dto.supplierGroupId ?? null,
       paymentTermId: dto.paymentTermId ?? null,
       creditDays: dto.creditDays ?? 0,
@@ -235,6 +245,7 @@ export class SuppliersService {
     if (dto.displayName !== undefined) supplier.displayName = dto.displayName;
     if (dto.phone !== undefined) supplier.phone = dto.phone;
     if (dto.email !== undefined) supplier.email = dto.email;
+    if (dto.country !== undefined) supplier.country = dto.country;
     if (dto.creditDays !== undefined) supplier.creditDays = dto.creditDays;
     if (dto.openingBalanceAmount !== undefined) {
       supplier.openingBalanceAmount = dto.openingBalanceAmount;
@@ -265,9 +276,35 @@ export class SuppliersService {
     return this.supplierRepository.save(supplier);
   }
 
+  private async assertNoHistoricalReferences(
+    supplierId: string,
+    companyId: string,
+  ): Promise<void> {
+    const [purchaseOrderCount, paymentCount, goodsReceiptCount] =
+      await Promise.all([
+        this.purchaseOrderRepository.count({
+          where: { supplierId, companyId },
+        }),
+        this.paymentRepository.count({
+          where: { supplierId, companyId },
+        }),
+        this.goodsReceiptRepository.count({
+          where: { supplierId, companyId },
+        }),
+      ]);
+
+    if (purchaseOrderCount || paymentCount || goodsReceiptCount) {
+      throw new AppException(
+        ErrorCode.Conflict,
+        'This supplier already has purchase history and cannot be deleted. Set it inactive or blocked instead.',
+      );
+    }
+  }
+
   /** Soft delete only — preserves historical integrity for future Purchase references (Phase 11 §34). */
   async remove(id: string, companyId: string): Promise<void> {
     const supplier = await this.findByIdInCompany(id, companyId);
+    await this.assertNoHistoricalReferences(id, companyId);
     await this.supplierRepository.softRemove(supplier);
   }
 }

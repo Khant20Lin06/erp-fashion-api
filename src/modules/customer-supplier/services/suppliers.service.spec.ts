@@ -12,6 +12,9 @@ import { Company } from '../../organization/entities/company.entity';
 import { CompanyStatus } from '../../organization/entities/company-status.enum';
 import { Branch } from '../../organization/entities/branch.entity';
 import { ErrorCode } from '../../../core/errors/error-codes';
+import { PurchaseOrder } from '../../purchase/entities/purchase-order.entity';
+import { Payment } from '../../payments/entities/payment.entity';
+import { GoodsReceipt } from '../../inventory/entities/goods-receipt.entity';
 
 describe('SuppliersService', () => {
   let service: SuppliersService;
@@ -33,6 +36,9 @@ describe('SuppliersService', () => {
   let paymentTermsService: jest.Mocked<
     Pick<PaymentTermsService, 'findByIdInCompany'>
   >;
+  let purchaseOrderRepository: jest.Mocked<Pick<Repository<PurchaseOrder>, 'count'>>;
+  let paymentRepository: jest.Mocked<Pick<Repository<Payment>, 'count'>>;
+  let goodsReceiptRepository: jest.Mocked<Pick<Repository<GoodsReceipt>, 'count'>>;
   let queryBuilder: jest.Mocked<
     Pick<
       SelectQueryBuilder<Supplier>,
@@ -60,6 +66,7 @@ describe('SuppliersService', () => {
       displayName: null,
       phone: null,
       email: null,
+      country: null,
       supplierGroupId: null,
       paymentTermId: null,
       creditDays: 0,
@@ -90,9 +97,15 @@ describe('SuppliersService', () => {
     branchesService = { findActiveByIdOrNull: jest.fn() };
     supplierGroupsService = { findByIdInCompany: jest.fn() };
     paymentTermsService = { findByIdInCompany: jest.fn() };
+    purchaseOrderRepository = { count: jest.fn().mockResolvedValue(0) };
+    paymentRepository = { count: jest.fn().mockResolvedValue(0) };
+    goodsReceiptRepository = { count: jest.fn().mockResolvedValue(0) };
 
     service = new SuppliersService(
       supplierRepository as unknown as Repository<Supplier>,
+      purchaseOrderRepository as unknown as Repository<PurchaseOrder>,
+      paymentRepository as unknown as Repository<Payment>,
+      goodsReceiptRepository as unknown as Repository<GoodsReceipt>,
       companiesService as unknown as CompaniesService,
       branchesService as unknown as BranchesService,
       supplierGroupsService as unknown as SupplierGroupsService,
@@ -117,6 +130,7 @@ describe('SuppliersService', () => {
       expect(supplierRepository.create).toHaveBeenCalledWith(
         expect.objectContaining({
           creditDays: 0,
+          country: null,
           openingBalanceAmount: '0.00',
           status: SupplierStatus.Active,
         }),
@@ -209,6 +223,17 @@ describe('SuppliersService', () => {
       await service.remove('supp-1', 'company-a');
 
       expect(supplierRepository.softRemove).toHaveBeenCalledWith(supplier);
+    });
+
+    it('rejects delete when purchase history already references the supplier', async () => {
+      supplierRepository.findOne.mockResolvedValue(buildSupplier());
+      purchaseOrderRepository.count.mockResolvedValue(1);
+
+      await expect(
+        service.remove('supp-1', 'company-a'),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.Conflict });
+
+      expect(supplierRepository.softRemove).not.toHaveBeenCalled();
     });
   });
 });

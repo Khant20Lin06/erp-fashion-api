@@ -7,6 +7,7 @@ import {
 import { GoodsReceipt } from './goods-receipt.entity';
 import { PurchaseOrderItem } from '../../purchase/entities/purchase-order-item.entity';
 import { ProductVariant } from '../../products/entities/product-variant.entity';
+import { Uom } from '../../uom/entities/uom.entity';
 
 /**
  * GoodsReceipt line item (Phase 14 locked decision D2). productVariantId is
@@ -55,11 +56,40 @@ export class GoodsReceiptItem {
   @JoinColumn({ name: 'product_variant_id' })
   productVariant!: ProductVariant;
 
+  @Index()
+  @Column({ name: 'uom_id', type: 'char', length: 36, nullable: true })
+  uomId!: string | null;
+
+  @ManyToOne(() => Uom, { onDelete: 'RESTRICT', nullable: true })
+  @JoinColumn({ name: 'uom_id' })
+  uom?: Uom | null;
+
+  @Column({ name: 'uom_code_snapshot', type: 'varchar', length: 20, nullable: true })
+  uomCodeSnapshot!: string | null;
+
+  @Column({ name: 'uom_name_snapshot', type: 'varchar', length: 100, nullable: true })
+  uomNameSnapshot!: string | null;
+
   @Column({ name: 'received_quantity', type: 'int' })
   receivedQuantity!: number;
 
   @Column({ name: 'rejected_quantity', type: 'int', default: 0 })
   rejectedQuantity!: number;
+
+  @Column({
+    name: 'conversion_factor_to_base_snapshot',
+    type: 'decimal',
+    precision: 14,
+    scale: 4,
+    default: 1,
+  })
+  conversionFactorToBaseSnapshot!: string;
+
+  @Column({ name: 'base_received_quantity', type: 'int', default: 0 })
+  baseReceivedQuantity!: number;
+
+  @Column({ name: 'base_rejected_quantity', type: 'int', default: 0 })
+  baseRejectedQuantity!: number;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamp' })
   createdAt!: Date;

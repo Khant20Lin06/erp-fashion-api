@@ -5,6 +5,7 @@ import {
   IsNumberString,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   MinLength,
   ValidateNested,
@@ -23,6 +24,10 @@ export class CreateProductVariantDto {
 
   @IsNumberString()
   sellingPrice!: string;
+
+  @IsOptional()
+  @IsUUID()
+  baseUomId?: string;
 
   @IsOptional()
   @IsArray()

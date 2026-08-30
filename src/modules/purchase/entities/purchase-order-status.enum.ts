@@ -7,6 +7,10 @@
  */
 export enum PurchaseOrderStatus {
   Draft = 'DRAFT',
+  Submitted = 'SUBMITTED',
+  Approved = 'APPROVED',
   Confirmed = 'CONFIRMED',
+  Rejected = 'REJECTED',
+  Closed = 'CLOSED',
   Cancelled = 'CANCELLED',
 }

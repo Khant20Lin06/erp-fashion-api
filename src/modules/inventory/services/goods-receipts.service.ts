@@ -21,7 +21,6 @@ import { PurchaseOrderStatus } from '../../purchase/entities/purchase-order-stat
 import { WarehousesService } from '../../organization/services/warehouses.service';
 import { WarehouseStatus } from '../../organization/entities/warehouse-status.enum';
 import { ProductVariant } from '../../products/entities/product-variant.entity';
-import { ProductVariantStatus } from '../../products/entities/product-variant-status.enum';
 import { AppException } from '../../../core/errors/app.exception';
 import { ErrorCode } from '../../../core/errors/error-codes';
 import {
@@ -55,6 +54,28 @@ export class GoodsReceiptsService {
     private readonly warehousesService: WarehousesService,
   ) {}
 
+  private computeBaseQuantity(
+    quantity: number,
+    conversionFactorToBase: string,
+    fieldName: string,
+  ): number {
+    const rawBaseQuantity = quantity * Number(conversionFactorToBase);
+    const roundedBaseQuantity = Math.round(rawBaseQuantity);
+
+    if (
+      !Number.isFinite(rawBaseQuantity) ||
+      rawBaseQuantity < 0 ||
+      Math.abs(rawBaseQuantity - roundedBaseQuantity) > 1e-9
+    ) {
+      throw new AppException(
+        ErrorCode.ValidationError,
+        `${fieldName} must convert to a whole base-unit quantity`,
+      );
+    }
+
+    return roundedBaseQuantity;
+  }
+
   async findAll(
     companyId: string,
     query: ListGoodsReceiptsDto,
@@ -64,6 +85,7 @@ export class GoodsReceiptsService {
 
     const qb = this.goodsReceiptRepository
       .createQueryBuilder('gr')
+      .leftJoinAndSelect('gr.items', 'items')
       .where('gr.companyId = :companyId', { companyId });
 
     if (query.purchaseOrderId) {
@@ -83,6 +105,7 @@ export class GoodsReceiptsService {
     }
 
     qb.orderBy('gr.createdAt', 'DESC')
+      .distinct(true)
       .skip((page - 1) * limit)
       .take(limit);
 
@@ -172,23 +195,48 @@ export class GoodsReceiptsService {
     const year = receiptDate.getUTCFullYear();
 
     return this.transactionService.run(async (manager) => {
-      // PurchaseOrder must belong to the resolved company and be CONFIRMED.
+      // PurchaseOrder must belong to the resolved company and be released.
       const purchaseOrder = await manager.findOne(PurchaseOrder, {
         where: { id: dto.purchaseOrderId, companyId },
       });
       if (!purchaseOrder) {
         throw new AppException(ErrorCode.NotFound, 'Purchase order not found');
       }
-      if (purchaseOrder.status === PurchaseOrderStatus.Draft) {
+      if (
+        purchaseOrder.status === PurchaseOrderStatus.Draft ||
+        purchaseOrder.status === PurchaseOrderStatus.Submitted
+      ) {
         throw new AppException(
           ErrorCode.Conflict,
           'Cannot receive against a DRAFT purchase order — it must be CONFIRMED first',
         );
       }
-      if (purchaseOrder.status === PurchaseOrderStatus.Cancelled) {
+      if (
+        purchaseOrder.status === PurchaseOrderStatus.Cancelled ||
+        purchaseOrder.status === PurchaseOrderStatus.Rejected ||
+        purchaseOrder.status === PurchaseOrderStatus.Closed
+      ) {
         throw new AppException(
           ErrorCode.Conflict,
           'Cannot receive against a CANCELLED purchase order',
+        );
+      }
+      if (
+        purchaseOrder.branchId &&
+        warehouse.branchId !== purchaseOrder.branchId
+      ) {
+        throw new AppException(
+          ErrorCode.ValidationError,
+          'warehouseId does not belong to the purchase order branch',
+        );
+      }
+      if (
+        purchaseOrder.warehouseId &&
+        warehouse.id !== purchaseOrder.warehouseId
+      ) {
+        throw new AppException(
+          ErrorCode.ValidationError,
+          'warehouseId does not match the purchase order warehouse',
         );
       }
 
@@ -201,8 +249,14 @@ export class GoodsReceiptsService {
       const itemRows: Array<{
         purchaseOrderItemId: string;
         productVariantId: string;
+        uomId: string | null;
+        uomCodeSnapshot: string | null;
+        uomNameSnapshot: string | null;
         receivedQuantity: number;
         rejectedQuantity: number;
+        conversionFactorToBaseSnapshot: string;
+        baseReceivedQuantity: number;
+        baseRejectedQuantity: number;
       }> = [];
 
       // Deterministic lock order: sort by purchaseOrderItemId to avoid
@@ -243,6 +297,7 @@ export class GoodsReceiptsService {
 
         const variant = await manager.findOne(ProductVariant, {
           where: { id: itemDto.productVariantId, companyId },
+          withDeleted: true,
         });
         if (!variant) {
           throw new AppException(
@@ -250,16 +305,15 @@ export class GoodsReceiptsService {
             `Product variant ${itemDto.productVariantId} not found`,
           );
         }
-        if (variant.status !== ProductVariantStatus.Active) {
-          throw new AppException(
-            ErrorCode.ValidationError,
-            `Product variant ${itemDto.productVariantId} is not active`,
-          );
-        }
+        // Goods Receipt follows a confirmed purchase-order line, so it must
+        // remain able to receive against that exact historical variant even
+        // if the catalog variant/product was later archived or soft-deleted.
+        // Company scope and exact PO-line binding are still enforced above.
 
         // Remaining quantity is always computed server-side, never stored
-        // as a mutable column — SUM of all prior GoodsReceiptItem rows for
-        // this PurchaseOrderItem, computed inside the same lock.
+        // as a mutable column — SUM of all prior handled
+        // GoodsReceiptItem rows for this PurchaseOrderItem, computed inside
+        // the same lock.
         //
         // This SUM must be a LOCKING read (setLock), not a plain SELECT.
         // MySQL's default REPEATABLE READ isolation gives plain SELECTs a
@@ -277,49 +331,81 @@ export class GoodsReceiptsService {
         // snapshot-isolation bug in the remaining-quantity computation.
         // setLock('pessimistic_read') forces a fresh, latest-committed
         // read instead of the transaction's snapshot.
-        const priorReceivedRaw = await manager
+        const priorHandledRaw = await manager
           .createQueryBuilder(GoodsReceiptItem, 'gri')
-          .select('COALESCE(SUM(gri.receivedQuantity), 0)', 'total')
+          .select(
+            'COALESCE(SUM(gri.receivedQuantity + gri.rejectedQuantity), 0)',
+            'total',
+          )
           .where('gri.purchaseOrderItemId = :purchaseOrderItemId', {
             purchaseOrderItemId: itemDto.purchaseOrderItemId,
           })
           .setLock('pessimistic_read')
           .getRawOne<{ total: string }>();
-        const priorReceived = Number(priorReceivedRaw?.total ?? 0);
-        const remaining = purchaseOrderItem.quantity - priorReceived;
+        const priorHandled = Number(priorHandledRaw?.total ?? 0);
+        const remaining = purchaseOrderItem.quantity - priorHandled;
+        const rejectedQuantity = itemDto.rejectedQuantity ?? 0;
+        const handledQuantity = itemDto.receivedQuantity + rejectedQuantity;
+        const conversionFactorToBase =
+          purchaseOrderItem.conversionFactorToBaseSnapshot ?? '1.0000';
+        const baseReceivedQuantity = this.computeBaseQuantity(
+          itemDto.receivedQuantity,
+          conversionFactorToBase,
+          `receivedQuantity for purchase order item ${itemDto.purchaseOrderItemId}`,
+        );
+        const baseRejectedQuantity = this.computeBaseQuantity(
+          rejectedQuantity,
+          conversionFactorToBase,
+          `rejectedQuantity for purchase order item ${itemDto.purchaseOrderItemId}`,
+        );
 
-        if (itemDto.receivedQuantity > remaining) {
+        if (handledQuantity <= 0) {
           throw new AppException(
-            ErrorCode.Conflict,
-            `Cannot receive ${itemDto.receivedQuantity} for purchase order item ${itemDto.purchaseOrderItemId}: only ${remaining} remaining`,
+            ErrorCode.ValidationError,
+            `Goods receipt item ${itemDto.purchaseOrderItemId} must receive or reject at least 1 unit`,
           );
         }
 
-        // Lock (upsert-then-lock) the WarehouseStock row, increase it, and
-        // write a PURCHASE_RECEIPT movement — all inside this same
-        // transaction/lock scope.
-        const stock = await lockWarehouseStockRow(
-          manager,
-          dto.warehouseId,
-          itemDto.productVariantId,
-        );
-        const newOnHandQuantity =
-          stock.onHandQuantity + itemDto.receivedQuantity;
-        // manager.update() rather than manager.save() — see
-        // generateReceiptNumber()'s comment for why: save() on an entity
-        // hydrated via createQueryBuilder().setLock().getOneOrFail() was
-        // found (via a real e2e concurrency test) to sometimes issue a
-        // duplicate INSERT instead of an UPDATE.
-        await manager.update(WarehouseStock, stock.id, {
-          onHandQuantity: newOnHandQuantity,
-        });
-        stock.onHandQuantity = newOnHandQuantity;
+        if (handledQuantity > remaining) {
+          throw new AppException(
+            ErrorCode.Conflict,
+            `Cannot handle ${handledQuantity} units for purchase order item ${itemDto.purchaseOrderItemId}: only ${remaining} remaining`,
+          );
+        }
+
+        if (itemDto.receivedQuantity > 0) {
+          // Lock (upsert-then-lock) the WarehouseStock row, increase it, and
+          // write a PURCHASE_RECEIPT movement — all inside this same
+          // transaction/lock scope.
+          const stock = await lockWarehouseStockRow(
+            manager,
+            dto.warehouseId,
+            itemDto.productVariantId,
+          );
+          const newOnHandQuantity =
+            stock.onHandQuantity + baseReceivedQuantity;
+          // manager.update() rather than manager.save() — see
+          // generateReceiptNumber()'s comment for why: save() on an entity
+          // hydrated via createQueryBuilder().setLock().getOneOrFail() was
+          // found (via a real e2e concurrency test) to sometimes issue a
+          // duplicate INSERT instead of an UPDATE.
+          await manager.update(WarehouseStock, stock.id, {
+            onHandQuantity: newOnHandQuantity,
+          });
+          stock.onHandQuantity = newOnHandQuantity;
+        }
 
         itemRows.push({
           purchaseOrderItemId: itemDto.purchaseOrderItemId,
           productVariantId: itemDto.productVariantId,
+          uomId: purchaseOrderItem.uomId ?? null,
+          uomCodeSnapshot: purchaseOrderItem.uomCodeSnapshot ?? null,
+          uomNameSnapshot: purchaseOrderItem.uomNameSnapshot ?? null,
           receivedQuantity: itemDto.receivedQuantity,
-          rejectedQuantity: itemDto.rejectedQuantity ?? 0,
+          rejectedQuantity,
+          conversionFactorToBaseSnapshot: conversionFactorToBase,
+          baseReceivedQuantity,
+          baseRejectedQuantity,
         });
       }
 
@@ -345,23 +431,25 @@ export class GoodsReceiptsService {
         // Write the movement AFTER the GoodsReceipt row exists so
         // referenceId is real; stock was already incremented above, so
         // quantityAfter reflects the just-locked row's post-increment value.
-        const stock = await manager.findOneOrFail(WarehouseStock, {
-          where: {
+        if (row.receivedQuantity > 0) {
+          const stock = await manager.findOneOrFail(WarehouseStock, {
+            where: {
+              warehouseId: dto.warehouseId,
+              productVariantId: row.productVariantId,
+            },
+          });
+          const movement = manager.create(StockMovement, {
             warehouseId: dto.warehouseId,
             productVariantId: row.productVariantId,
-          },
-        });
-        const movement = manager.create(StockMovement, {
-          warehouseId: dto.warehouseId,
-          productVariantId: row.productVariantId,
-          movementType: StockMovementType.PurchaseReceipt,
-          quantityChange: row.receivedQuantity,
-          quantityAfter: stock.onHandQuantity,
-          referenceType: StockMovementReferenceType.GoodsReceipt,
-          referenceId: savedGoodsReceipt.id,
-          createdBy: userId,
-        });
-        await manager.save(StockMovement, movement);
+            movementType: StockMovementType.PurchaseReceipt,
+            quantityChange: row.baseReceivedQuantity,
+            quantityAfter: stock.onHandQuantity,
+            referenceType: StockMovementReferenceType.GoodsReceipt,
+            referenceId: savedGoodsReceipt.id,
+            createdBy: userId,
+          });
+          await manager.save(StockMovement, movement);
+        }
       }
 
       savedGoodsReceipt.items = await manager.find(GoodsReceiptItem, {

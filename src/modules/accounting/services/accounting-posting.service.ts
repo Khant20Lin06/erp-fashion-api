@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { EntityManager } from 'typeorm';
 import { Payment } from '../../payments/entities/payment.entity';
 import { PaymentDirection } from '../../payments/entities/payment-direction.enum';
@@ -274,6 +275,48 @@ export class AccountingPostingService {
       }
       throw error;
     }
+  }
+
+  async reversePayment(
+    payment: Payment,
+    userId: string,
+    manager: EntityManager,
+    reason?: string,
+  ): Promise<JournalEntry | null> {
+    if (payment.direction === PaymentDirection.Refund) {
+      return null;
+    }
+
+    const original = await this.journalEntriesService.findBySource(
+      payment.companyId,
+      JournalSourceType.Payment,
+      payment.id,
+      manager,
+    );
+    if (!original || !original.lines || original.lines.length === 0) {
+      return null;
+    }
+
+    return this.journalEntriesService.createInternal({
+      companyId: payment.companyId,
+      branchId: payment.branchId,
+      entryDate: new Date(),
+      description: reason
+        ? `Reverse payment ${payment.paymentNumber}: ${reason}`
+        : `Reverse payment ${payment.paymentNumber}`,
+      sourceType: JournalSourceType.Manual,
+      sourceId: randomUUID(),
+      userId,
+      manager,
+      lines: original.lines.map((line) => ({
+        accountId: line.accountId,
+        debitAmount: line.creditAmount,
+        creditAmount: line.debitAmount,
+        referenceType: JournalReferenceType.Payment,
+        referenceId: payment.id,
+        description: `Reversal of payment ${payment.paymentNumber}`,
+      })),
+    });
   }
 
   private isDuplicateSourceError(error: unknown): boolean {

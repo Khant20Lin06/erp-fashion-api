@@ -1,12 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, EntityManager, Repository } from 'typeorm';
+import { Brackets, EntityManager, In, Repository } from 'typeorm';
 import { Product } from '../entities/product.entity';
 import { ProductStatus } from '../entities/product-status.enum';
 import { ProductType } from '../entities/product-type.enum';
 import { ProductVariant } from '../entities/product-variant.entity';
 import { ProductVariantAttribute } from '../entities/product-variant-attribute.entity';
 import { ProductVariantStatus } from '../entities/product-variant-status.enum';
+import { ProductVariantUom } from '../entities/product-variant-uom.entity';
+import { ProductVariantUomUsageType } from '../entities/product-variant-uom-usage-type.enum';
 import { CreateProductDto } from '../dto/create-product.dto';
 import { UpdateProductDto } from '../dto/update-product.dto';
 import { ListProductsDto } from '../dto/list-products.dto';
@@ -29,6 +31,9 @@ import {
 import { resolveSortField } from '../../../shared/dto/resolve-sort-field';
 import { computeCombinationKey } from '../utils/combination-key';
 import { CreateProductVariantDto } from '../dto/create-product-variant.dto';
+import { PurchaseOrderItem } from '../../purchase/entities/purchase-order-item.entity';
+import { PurchaseOrderStatus } from '../../purchase/entities/purchase-order-status.enum';
+import { Uom } from '../../uom/entities/uom.entity';
 
 export interface PaginatedProducts {
   data: Product[];
@@ -44,6 +49,12 @@ export class ProductsService {
     private readonly productRepository: Repository<Product>,
     @InjectRepository(ProductVariant)
     private readonly variantRepository: Repository<ProductVariant>,
+    @InjectRepository(ProductVariantUom)
+    private readonly variantUomRepository: Repository<ProductVariantUom>,
+    @InjectRepository(PurchaseOrderItem)
+    private readonly purchaseOrderItemRepository: Repository<PurchaseOrderItem>,
+    @InjectRepository(Uom)
+    private readonly uomRepository: Repository<Uom>,
     private readonly companiesService: CompaniesService,
     private readonly categoriesService: CategoriesService,
     private readonly brandsService: BrandsService,
@@ -235,6 +246,52 @@ export class ProductsService {
     }
   }
 
+  private async resolveBaseUom(
+    companyId: string,
+    baseUomId?: string,
+  ): Promise<Uom | null> {
+    if (!baseUomId) {
+      return null;
+    }
+
+    const uom = await this.uomRepository.findOne({
+      where: { id: baseUomId, companyId },
+    });
+    if (!uom || !uom.isActive) {
+      throw new AppException(
+        ErrorCode.ValidationError,
+        'baseUomId must reference an active UOM in this company',
+      );
+    }
+
+    return uom;
+  }
+
+  private async assertVariantsNotLinkedToOpenPurchaseOrders(
+    companyId: string,
+    variantIds: string[],
+  ): Promise<void> {
+    if (variantIds.length === 0) return;
+
+    const linkedItems = await this.purchaseOrderItemRepository.find({
+      where: { productVariantId: In(variantIds) },
+      relations: { purchaseOrder: true },
+    });
+
+    const blockingItem = linkedItems.find(
+      (item) =>
+        item.purchaseOrder?.companyId === companyId &&
+        item.purchaseOrder.status !== PurchaseOrderStatus.Cancelled,
+    );
+
+    if (blockingItem) {
+      throw new AppException(
+        ErrorCode.Conflict,
+        'Cannot delete a product referenced by an open purchase order',
+      );
+    }
+  }
+
   /**
    * Creates a Product together with its one initial ProductVariant (and any
    * attribute assignments) inside a single transaction (Phase 10
@@ -272,6 +329,10 @@ export class ProductsService {
       companyId,
       dto.initialVariant,
     );
+    const baseUom = await this.resolveBaseUom(
+      companyId,
+      dto.initialVariant.baseUomId,
+    );
 
     return this.transactionService.run(async (manager) => {
       await this.assertSkuAvailable(companyId, dto.initialVariant.sku, manager);
@@ -296,9 +357,26 @@ export class ProductsService {
         combinationKey,
         costPrice: dto.initialVariant.costPrice,
         sellingPrice: dto.initialVariant.sellingPrice,
+        baseUomId: baseUom?.id ?? null,
         status: ProductVariantStatus.Active,
       });
       const savedVariant = await manager.save(ProductVariant, variant);
+
+      if (baseUom) {
+        await manager.save(
+          ProductVariantUom,
+          manager.create(ProductVariantUom, {
+            variantId: savedVariant.id,
+            companyId,
+            uomId: baseUom.id,
+            conversionFactorToBase: '1.0000',
+            usageType: ProductVariantUomUsageType.Both,
+            barcode: null,
+            isBase: true,
+            isActive: true,
+          }),
+        );
+      }
 
       for (const attribute of attributes) {
         await manager.save(
@@ -360,8 +438,18 @@ export class ProductsService {
     const variants = await this.variantRepository.find({
       where: { productId: id, companyId },
     });
+    await this.assertVariantsNotLinkedToOpenPurchaseOrders(
+      companyId,
+      variants.map((variant) => variant.id),
+    );
 
     if (variants.length > 0) {
+      const variantMappings = await this.variantUomRepository.find({
+        where: { companyId, variantId: In(variants.map((variant) => variant.id)) },
+      });
+      if (variantMappings.length > 0) {
+        await this.variantUomRepository.softRemove(variantMappings);
+      }
       await this.variantRepository.softRemove(variants);
     }
     await this.productRepository.softRemove(product);

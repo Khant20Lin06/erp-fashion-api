@@ -1,4 +1,8 @@
 import 'dotenv/config';
+import {
+  createScriptLogger,
+  logScriptFailure,
+} from '../../common/logging/script-logger';
 import { v4 as uuidv4 } from 'uuid';
 import { AppDataSource } from '../data-source';
 import { Company } from '../../modules/organization/entities/company.entity';
@@ -18,6 +22,8 @@ import { DesignationStatus } from '../../modules/hr/entities/designation-status.
 import { EmployeeAssignment } from '../../modules/hr/entities/employee-assignment.entity';
 import { EmployeeAssignmentStatus } from '../../modules/hr/entities/employee-assignment-status.enum';
 import { LeaveType } from '../../modules/hr/entities/leave-type.entity';
+
+const logger = createScriptLogger('LinkedBusinessSeed');
 import { LeaveTypeStatus } from '../../modules/hr/entities/leave-type-status.enum';
 import { LeaveRequest } from '../../modules/hr/entities/leave-request.entity';
 import { LeaveRequestStatus } from '../../modules/hr/entities/leave-request-status.enum';
@@ -34,6 +40,12 @@ import { CustomerStatus } from '../../modules/customer-supplier/entities/custome
 import { Supplier } from '../../modules/customer-supplier/entities/supplier.entity';
 import { SupplierStatus } from '../../modules/customer-supplier/entities/supplier-status.enum';
 import { ProductVariant } from '../../modules/products/entities/product-variant.entity';
+import { ProductVariantUom } from '../../modules/products/entities/product-variant-uom.entity';
+import { ProductVariantUomUsageType } from '../../modules/products/entities/product-variant-uom-usage-type.enum';
+import { PriceList } from '../../modules/products/entities/price-list.entity';
+import { PriceListStatus } from '../../modules/products/entities/price-list-status.enum';
+import { PriceListItem } from '../../modules/products/entities/price-list-item.entity';
+import { PriceListItemStatus } from '../../modules/products/entities/price-list-item-status.enum';
 import { Sale } from '../../modules/sales/entities/sale.entity';
 import { SaleItem } from '../../modules/sales/entities/sale-item.entity';
 import { SaleStatus } from '../../modules/sales/entities/sale-status.enum';
@@ -55,7 +67,26 @@ import { PaymentAllocation } from '../../modules/payments/entities/payment-alloc
 import { PaymentReferenceType } from '../../modules/payments/entities/payment-reference-type.enum';
 import { Account } from '../../modules/accounting/entities/account.entity';
 import { AccountType } from '../../modules/accounting/entities/account-type.enum';
-import { FindOptionsWhere, Repository } from 'typeorm';
+import { EmployeeCompensation } from '../../modules/payroll/entities/employee-compensation.entity';
+import { EmployeePayrollComponent } from '../../modules/payroll/entities/employee-payroll-component.entity';
+import { PayrollComponent } from '../../modules/payroll/entities/payroll-component.entity';
+import { PayrollConfiguration } from '../../modules/payroll/entities/payroll-configuration.entity';
+import { PayrollPeriod } from '../../modules/payroll/entities/payroll-period.entity';
+import { CompanyPayrollPeriodCounter } from '../../modules/payroll/entities/company-payroll-period-counter.entity';
+import { PayrollRun } from '../../modules/payroll/entities/payroll-run.entity';
+import { CompanyPayrollRunCounter } from '../../modules/payroll/entities/company-payroll-run-counter.entity';
+import { PayrollRunEmployee } from '../../modules/payroll/entities/payroll-run-employee.entity';
+import { PayrollRunEmployeeItem } from '../../modules/payroll/entities/payroll-run-employee-item.entity';
+import { PayFrequency } from '../../modules/payroll/entities/pay-frequency.enum';
+import { PayrollComponentType } from '../../modules/payroll/entities/payroll-component-type.enum';
+import { PayrollCalculationType } from '../../modules/payroll/entities/payroll-calculation-type.enum';
+import { UnpaidLeaveCalculation } from '../../modules/payroll/entities/unpaid-leave-calculation.enum';
+import { PayrollPeriodStatus } from '../../modules/payroll/entities/payroll-period-status.enum';
+import { PayrollRunStatus } from '../../modules/payroll/entities/payroll-run-status.enum';
+import { PayrollRunEmployeeStatus } from '../../modules/payroll/entities/payroll-run-employee-status.enum';
+import { Uom } from '../../modules/uom/entities/uom.entity';
+import { UomCategory } from '../../modules/uom/entities/uom-category.enum';
+import { FindOptionsWhere, IsNull, Repository } from 'typeorm';
 
 type NamedSeed = {
   code: string;
@@ -63,8 +94,85 @@ type NamedSeed = {
   description?: string;
 };
 
+type UomSeed = {
+  code: string;
+  name: string;
+  symbol: string;
+  category: UomCategory;
+  decimalPlaces: number;
+};
+
+type PriceListSeed = {
+  code: string;
+  name: string;
+  description: string;
+  currency: string;
+  status: PriceListStatus;
+};
+
 const COMPANY_CODE = 'FASHION-ENT-MAIN';
 const PRICE_CURRENCY = 'USD';
+const CORE_PRICE_VALID_FROM = '2026-01-01T00:00:00.000Z';
+const PROMO_PRICE_VALID_FROM = '2026-08-20T00:00:00.000Z';
+const PROMO_PRICE_VALID_TO = '2026-09-15T23:59:59.000Z';
+
+const UOM_BLUEPRINTS: UomSeed[] = [
+  {
+    code: 'PCS',
+    name: 'Piece',
+    symbol: 'pc',
+    category: UomCategory.Count,
+    decimalPlaces: 0,
+  },
+  {
+    code: 'PACK3',
+    name: 'Pack of 3',
+    symbol: 'pk3',
+    category: UomCategory.Count,
+    decimalPlaces: 0,
+  },
+  {
+    code: 'PACK6',
+    name: 'Pack of 6',
+    symbol: 'pk6',
+    category: UomCategory.Count,
+    decimalPlaces: 0,
+  },
+  {
+    code: 'CARTON12',
+    name: 'Carton of 12',
+    symbol: 'ctn12',
+    category: UomCategory.Count,
+    decimalPlaces: 0,
+  },
+];
+
+const PRICE_LIST_BLUEPRINTS: PriceListSeed[] = [
+  {
+    code: 'PL-RETAIL-USD',
+    name: 'Standard Retail Price List',
+    description:
+      'Default in-store selling prices per piece and retail sales packs.',
+    currency: PRICE_CURRENCY,
+    status: PriceListStatus.Active,
+  },
+  {
+    code: 'PL-WHOLESALE-USD',
+    name: 'Wholesale Pack Price List',
+    description:
+      'Bulk and reseller pricing for larger pack and carton transactions.',
+    currency: PRICE_CURRENCY,
+    status: PriceListStatus.Active,
+  },
+  {
+    code: 'PL-PROMO-USD',
+    name: 'Seasonal Campaign Price List',
+    description:
+      'Time-boxed markdown pricing for selected seasonal campaign variants.',
+    currency: PRICE_CURRENCY,
+    status: PriceListStatus.Active,
+  },
+];
 
 const DEPARTMENTS: NamedSeed[] = [
   {
@@ -213,6 +321,101 @@ const EMPLOYEE_BLUEPRINTS = [
   },
 ];
 
+const PAYROLL_COMPONENT_BLUEPRINTS = [
+  {
+    code: 'HOUSING',
+    name: 'Housing Allowance',
+    type: PayrollComponentType.Earning,
+    calculationType: PayrollCalculationType.FixedAmount,
+    fixedAmount: '180.00',
+    percentage: null,
+    isTaxable: true,
+  },
+  {
+    code: 'TRANSPORT',
+    name: 'Transport Allowance',
+    type: PayrollComponentType.Earning,
+    calculationType: PayrollCalculationType.FixedAmount,
+    fixedAmount: '75.00',
+    percentage: null,
+    isTaxable: false,
+  },
+  {
+    code: 'INCOME_TAX',
+    name: 'Income Tax',
+    type: PayrollComponentType.Deduction,
+    calculationType: PayrollCalculationType.PercentageOfBase,
+    fixedAmount: null,
+    percentage: '8.0000',
+    isTaxable: false,
+  },
+  {
+    code: 'SSB_EMPLOYEE',
+    name: 'Employee Social Security',
+    type: PayrollComponentType.Deduction,
+    calculationType: PayrollCalculationType.PercentageOfBase,
+    fixedAmount: null,
+    percentage: '2.0000',
+    isTaxable: false,
+  },
+  {
+    code: 'SSB_EMPLOYER',
+    name: 'Employer Social Security',
+    type: PayrollComponentType.EmployerContribution,
+    calculationType: PayrollCalculationType.PercentageOfBase,
+    fixedAmount: null,
+    percentage: '3.0000',
+    isTaxable: false,
+  },
+] as const;
+
+const PAYROLL_COMPENSATION_BLUEPRINTS = [
+  { employeeCode: 'EMP-1001', baseSalary: '2200.00' },
+  { employeeCode: 'EMP-1002', baseSalary: '900.00' },
+  { employeeCode: 'EMP-1003', baseSalary: '1100.00' },
+  { employeeCode: 'EMP-1004', baseSalary: '1400.00' },
+] as const;
+
+const EMPLOYEE_PAYROLL_COMPONENT_BLUEPRINTS = [
+  { employeeCode: 'EMP-1001', componentCode: 'HOUSING', amount: '250.00' },
+  { employeeCode: 'EMP-1001', componentCode: 'TRANSPORT', amount: '90.00' },
+  { employeeCode: 'EMP-1001', componentCode: 'INCOME_TAX' },
+  { employeeCode: 'EMP-1001', componentCode: 'SSB_EMPLOYEE' },
+  { employeeCode: 'EMP-1001', componentCode: 'SSB_EMPLOYER' },
+  { employeeCode: 'EMP-1002', componentCode: 'TRANSPORT', amount: '60.00' },
+  { employeeCode: 'EMP-1002', componentCode: 'INCOME_TAX' },
+  { employeeCode: 'EMP-1002', componentCode: 'SSB_EMPLOYEE' },
+  { employeeCode: 'EMP-1002', componentCode: 'SSB_EMPLOYER' },
+  { employeeCode: 'EMP-1003', componentCode: 'TRANSPORT', amount: '75.00' },
+  { employeeCode: 'EMP-1003', componentCode: 'INCOME_TAX' },
+  { employeeCode: 'EMP-1003', componentCode: 'SSB_EMPLOYEE' },
+  { employeeCode: 'EMP-1003', componentCode: 'SSB_EMPLOYER' },
+  { employeeCode: 'EMP-1004', componentCode: 'HOUSING', amount: '180.00' },
+  { employeeCode: 'EMP-1004', componentCode: 'TRANSPORT', amount: '75.00' },
+  { employeeCode: 'EMP-1004', componentCode: 'INCOME_TAX' },
+  { employeeCode: 'EMP-1004', componentCode: 'SSB_EMPLOYEE' },
+  { employeeCode: 'EMP-1004', componentCode: 'SSB_EMPLOYER' },
+] as const;
+
+const PAYROLL_PERIOD_BLUEPRINTS = [
+  {
+    periodNumber: 'PP-2026-000001',
+    name: 'July 2026',
+    startDate: '2026-07-01',
+    endDate: '2026-07-31',
+    payDate: '2026-08-05',
+    status: PayrollPeriodStatus.Finalized,
+  },
+  {
+    periodNumber: 'PP-2026-000002',
+    name: 'August 2026',
+    startDate: '2026-08-01',
+    endDate: '2026-08-31',
+    payDate: '2026-09-05',
+    status: PayrollPeriodStatus.Open,
+  },
+] as const;
+
 function chunk<T>(items: T[], size: number): T[][] {
   const result: T[][] = [];
   for (let i = 0; i < items.length; i += size) {
@@ -246,7 +449,7 @@ async function findSeedRow<T extends object>(
 
 async function seedLinkedBusinessData(): Promise<void> {
   await AppDataSource.initialize();
-  console.log('Seeding linked business data...');
+  logger.log('Seeding linked business data...');
 
   const companyRepo = AppDataSource.getRepository(Company);
   const branchRepo = AppDataSource.getRepository(Branch);
@@ -268,6 +471,10 @@ async function seedLinkedBusinessData(): Promise<void> {
   const customerRepo = AppDataSource.getRepository(Customer);
   const supplierRepo = AppDataSource.getRepository(Supplier);
   const variantRepo = AppDataSource.getRepository(ProductVariant);
+  const uomRepo = AppDataSource.getRepository(Uom);
+  const variantUomRepo = AppDataSource.getRepository(ProductVariantUom);
+  const priceListRepo = AppDataSource.getRepository(PriceList);
+  const priceListItemRepo = AppDataSource.getRepository(PriceListItem);
   const saleRepo = AppDataSource.getRepository(Sale);
   const saleItemRepo = AppDataSource.getRepository(SaleItem);
   const salesAccountRepo = AppDataSource.getRepository(SalesAccount);
@@ -280,6 +487,26 @@ async function seedLinkedBusinessData(): Promise<void> {
   const paymentRepo = AppDataSource.getRepository(Payment);
   const paymentAllocationRepo = AppDataSource.getRepository(PaymentAllocation);
   const accountRepo = AppDataSource.getRepository(Account);
+  const compensationRepo = AppDataSource.getRepository(EmployeeCompensation);
+  const employeePayrollComponentRepo = AppDataSource.getRepository(
+    EmployeePayrollComponent,
+  );
+  const payrollComponentRepo = AppDataSource.getRepository(PayrollComponent);
+  const payrollConfigurationRepo = AppDataSource.getRepository(
+    PayrollConfiguration,
+  );
+  const payrollPeriodRepo = AppDataSource.getRepository(PayrollPeriod);
+  const payrollPeriodCounterRepo = AppDataSource.getRepository(
+    CompanyPayrollPeriodCounter,
+  );
+  const payrollRunRepo = AppDataSource.getRepository(PayrollRun);
+  const payrollRunCounterRepo = AppDataSource.getRepository(
+    CompanyPayrollRunCounter,
+  );
+  const payrollRunEmployeeRepo = AppDataSource.getRepository(PayrollRunEmployee);
+  const payrollRunEmployeeItemRepo = AppDataSource.getRepository(
+    PayrollRunEmployeeItem,
+  );
 
   const company = await findSeedRow(companyRepo, { code: COMPANY_CODE });
   if (!company) {
@@ -366,6 +593,17 @@ async function seedLinkedBusinessData(): Promise<void> {
     paymentMethodRepo,
     company.id,
     accountsByCode,
+  );
+  const uomsByCode = await ensureUoms(uomRepo, company.id);
+  const priceListsByCode = await ensurePriceLists(priceListRepo, company.id);
+  await ensureVariantUomPricing(
+    variantRepo,
+    variantUomRepo,
+    priceListItemRepo,
+    variants,
+    company.id,
+    uomsByCode,
+    priceListsByCode,
   );
 
   await alignExistingCustomers(
@@ -456,9 +694,45 @@ async function seedLinkedBusinessData(): Promise<void> {
     leaveTypes,
     adminUser.id,
   );
+  const payrollComponentsByCode = await ensurePayrollComponents(
+    payrollComponentRepo,
+    company.id,
+    adminUser.id,
+  );
+  await ensureEmployeeCompensations(
+    compensationRepo,
+    company.id,
+    employees,
+    adminUser.id,
+  );
+  await ensureEmployeePayrollComponents(
+    employeePayrollComponentRepo,
+    employees,
+    payrollComponentsByCode,
+    adminUser.id,
+  );
+  await ensurePayrollConfiguration(
+    payrollConfigurationRepo,
+    company.id,
+    adminUser.id,
+  );
+  await ensurePayrollPeriodsAndRuns(
+    payrollPeriodRepo,
+    payrollPeriodCounterRepo,
+    payrollRunRepo,
+    payrollRunCounterRepo,
+    payrollRunEmployeeRepo,
+    payrollRunEmployeeItemRepo,
+    employees,
+    departmentsByCode,
+    designationsByCode,
+    payrollComponentsByCode,
+    adminUser.id,
+    company.id,
+  );
 
   await AppDataSource.destroy();
-  console.log('Linked business data seed complete.');
+  logger.log('Linked business data seed complete.');
 }
 
 async function ensureDepartments(
@@ -637,6 +911,374 @@ async function ensurePaymentMethods(
   return map;
 }
 
+async function ensureUoms(
+  repo: ReturnType<typeof AppDataSource.getRepository<Uom>>,
+  companyId: string,
+): Promise<Map<string, Uom>> {
+  const map = new Map<string, Uom>();
+
+  for (const seed of UOM_BLUEPRINTS) {
+    let entity = await findSeedRow(repo, [
+      { companyId, code: seed.code },
+      { companyId, name: seed.name },
+    ]);
+    if (!entity) {
+      entity = repo.create({
+        id: uuidv4(),
+        companyId,
+        code: seed.code,
+        name: seed.name,
+        symbol: seed.symbol,
+        category: seed.category,
+        decimalPlaces: seed.decimalPlaces,
+        isActive: true,
+      });
+    } else {
+      entity.code = seed.code;
+      entity.name = seed.name;
+      entity.symbol = seed.symbol;
+      entity.category = seed.category;
+      entity.decimalPlaces = seed.decimalPlaces;
+      entity.isActive = true;
+    }
+
+    entity = await repo.save(entity);
+    map.set(seed.code, entity);
+  }
+
+  return map;
+}
+
+async function ensurePriceLists(
+  repo: ReturnType<typeof AppDataSource.getRepository<PriceList>>,
+  companyId: string,
+): Promise<Map<string, PriceList>> {
+  const map = new Map<string, PriceList>();
+
+  for (const seed of PRICE_LIST_BLUEPRINTS) {
+    let entity = await findSeedRow(repo, [
+      { companyId, code: seed.code },
+      { companyId, name: seed.name },
+    ]);
+    if (!entity) {
+      entity = repo.create({
+        id: uuidv4(),
+        companyId,
+        code: seed.code,
+        name: seed.name,
+        description: seed.description,
+        currency: seed.currency,
+        status: seed.status,
+      });
+    } else {
+      entity.code = seed.code;
+      entity.name = seed.name;
+      entity.description = seed.description;
+      entity.currency = seed.currency;
+      entity.status = seed.status;
+    }
+
+    entity = await repo.save(entity);
+    map.set(seed.code, entity);
+  }
+
+  return map;
+}
+
+async function ensureVariantUomPricing(
+  variantRepo: ReturnType<typeof AppDataSource.getRepository<ProductVariant>>,
+  variantUomRepo: ReturnType<typeof AppDataSource.getRepository<ProductVariantUom>>,
+  priceListItemRepo: ReturnType<typeof AppDataSource.getRepository<PriceListItem>>,
+  variants: ProductVariant[],
+  companyId: string,
+  uomsByCode: Map<string, Uom>,
+  priceListsByCode: Map<string, PriceList>,
+): Promise<void> {
+  const baseUom = uomsByCode.get('PCS');
+  const pack3 = uomsByCode.get('PACK3');
+  const pack6 = uomsByCode.get('PACK6');
+  const carton12 = uomsByCode.get('CARTON12');
+  const retailPriceList = priceListsByCode.get('PL-RETAIL-USD');
+  const wholesalePriceList = priceListsByCode.get('PL-WHOLESALE-USD');
+  const promoPriceList = priceListsByCode.get('PL-PROMO-USD');
+
+  if (
+    !baseUom ||
+    !pack3 ||
+    !pack6 ||
+    !carton12 ||
+    !retailPriceList ||
+    !wholesalePriceList ||
+    !promoPriceList
+  ) {
+    throw new Error('UOMs or price lists are missing from linked business seed.');
+  }
+
+  for (const variant of [...variants].sort((left, right) => left.sku.localeCompare(right.sku))) {
+    let currentVariant = variant;
+    if (!currentVariant.baseUomId) {
+      currentVariant.baseUomId = baseUom.id;
+      currentVariant = await variantRepo.save(currentVariant);
+    }
+
+    const effectiveBaseUomId = currentVariant.baseUomId ?? baseUom.id;
+
+    await ensureVariantUomMapping(
+      variantUomRepo,
+      companyId,
+      currentVariant.id,
+      effectiveBaseUomId,
+      '1.0000',
+      ProductVariantUomUsageType.Both,
+      true,
+    );
+    await ensureVariantUomMapping(
+      variantUomRepo,
+      companyId,
+      currentVariant.id,
+      pack3.id,
+      '3.0000',
+      ProductVariantUomUsageType.Sales,
+      false,
+    );
+    await ensureVariantUomMapping(
+      variantUomRepo,
+      companyId,
+      currentVariant.id,
+      pack6.id,
+      '6.0000',
+      ProductVariantUomUsageType.Both,
+      false,
+    );
+    await ensureVariantUomMapping(
+      variantUomRepo,
+      companyId,
+      currentVariant.id,
+      carton12.id,
+      '12.0000',
+      ProductVariantUomUsageType.Both,
+      false,
+    );
+
+    for (const priceList of priceListsByCode.values()) {
+      await normalizeLegacyBasePriceRows(
+        priceListItemRepo,
+        companyId,
+        priceList.id,
+        currentVariant.id,
+        effectiveBaseUomId,
+      );
+    }
+
+    const basePrice = Number(currentVariant.sellingPrice);
+    await upsertPriceListItem(priceListItemRepo, {
+      companyId,
+      priceListId: retailPriceList.id,
+      productVariantId: currentVariant.id,
+      uomId: effectiveBaseUomId,
+      price: money(basePrice),
+      validFrom: CORE_PRICE_VALID_FROM,
+      validTo: null,
+      status: PriceListItemStatus.Active,
+    });
+    await upsertPriceListItem(priceListItemRepo, {
+      companyId,
+      priceListId: retailPriceList.id,
+      productVariantId: currentVariant.id,
+      uomId: pack3.id,
+      price: scaledPrice(basePrice, 3, 0.03),
+      validFrom: CORE_PRICE_VALID_FROM,
+      validTo: null,
+      status: PriceListItemStatus.Active,
+    });
+    await upsertPriceListItem(priceListItemRepo, {
+      companyId,
+      priceListId: wholesalePriceList.id,
+      productVariantId: currentVariant.id,
+      uomId: pack6.id,
+      price: scaledPrice(basePrice, 6, 0.1),
+      validFrom: CORE_PRICE_VALID_FROM,
+      validTo: null,
+      status: PriceListItemStatus.Active,
+    });
+    await upsertPriceListItem(priceListItemRepo, {
+      companyId,
+      priceListId: wholesalePriceList.id,
+      productVariantId: currentVariant.id,
+      uomId: carton12.id,
+      price: scaledPrice(basePrice, 12, 0.16),
+      validFrom: CORE_PRICE_VALID_FROM,
+      validTo: null,
+      status: PriceListItemStatus.Active,
+    });
+
+    if (shouldSeedPromoPrice(currentVariant.sku)) {
+      await upsertPriceListItem(priceListItemRepo, {
+        companyId,
+        priceListId: promoPriceList.id,
+        productVariantId: currentVariant.id,
+        uomId: effectiveBaseUomId,
+        price: scaledPrice(basePrice, 1, 0.12),
+        validFrom: PROMO_PRICE_VALID_FROM,
+        validTo: PROMO_PRICE_VALID_TO,
+        status: PriceListItemStatus.Active,
+      });
+    }
+  }
+}
+
+async function ensureVariantUomMapping(
+  repo: ReturnType<typeof AppDataSource.getRepository<ProductVariantUom>>,
+  companyId: string,
+  variantId: string,
+  uomId: string,
+  conversionFactorToBase: string,
+  usageType: ProductVariantUomUsageType,
+  isBase: boolean,
+): Promise<void> {
+  let entity = await findSeedRow(repo, { companyId, variantId, uomId });
+  if (!entity) {
+    entity = repo.create({
+      id: uuidv4(),
+      companyId,
+      variantId,
+      uomId,
+      conversionFactorToBase,
+      usageType,
+      barcode: null,
+      isBase,
+      isActive: true,
+    });
+  } else {
+    entity.conversionFactorToBase = conversionFactorToBase;
+    entity.usageType = usageType;
+    entity.barcode = null;
+    entity.isBase = isBase;
+    entity.isActive = true;
+  }
+
+  await repo.save(entity);
+}
+
+async function normalizeLegacyBasePriceRows(
+  repo: ReturnType<typeof AppDataSource.getRepository<PriceListItem>>,
+  companyId: string,
+  priceListId: string,
+  productVariantId: string,
+  baseUomId: string,
+): Promise<void> {
+  const legacyRows = await repo.find({
+    where: {
+      companyId,
+      priceListId,
+      productVariantId,
+      uomId: IsNull(),
+    },
+    withDeleted: true,
+    order: { validFrom: 'ASC', createdAt: 'ASC' },
+  });
+
+  for (const row of legacyRows) {
+    const replacement = await repo.findOne({
+      where: {
+        companyId,
+        priceListId,
+        productVariantId,
+        uomId: baseUomId,
+        validFrom: row.validFrom,
+      },
+      withDeleted: true,
+    });
+
+    if (replacement) {
+      replacement.price = row.price;
+      replacement.validTo = row.validTo;
+      replacement.status = row.status;
+      const restorableReplacement = replacement as PriceListItem & {
+        deletedAt?: Date | null;
+      };
+      if (restorableReplacement.deletedAt) {
+        restorableReplacement.deletedAt = null;
+      }
+      await repo.save(replacement);
+      if (!(row as PriceListItem & { deletedAt?: Date | null }).deletedAt) {
+        await repo.softRemove(row);
+      }
+      continue;
+    }
+
+    row.uomId = baseUomId;
+    const restorableRow = row as PriceListItem & { deletedAt?: Date | null };
+    if (restorableRow.deletedAt) {
+      restorableRow.deletedAt = null;
+    }
+    await repo.save(row);
+  }
+}
+
+async function upsertPriceListItem(
+  repo: ReturnType<typeof AppDataSource.getRepository<PriceListItem>>,
+  seed: {
+    companyId: string;
+    priceListId: string;
+    productVariantId: string;
+    uomId: string;
+    price: string;
+    validFrom: string;
+    validTo: string | null;
+    status: PriceListItemStatus;
+  },
+): Promise<void> {
+  const validFrom = new Date(seed.validFrom);
+  const validTo = seed.validTo ? new Date(seed.validTo) : null;
+
+  let entity = await repo.findOne({
+    where: {
+      companyId: seed.companyId,
+      priceListId: seed.priceListId,
+      productVariantId: seed.productVariantId,
+      uomId: seed.uomId,
+      validFrom,
+    },
+    withDeleted: true,
+  });
+
+  if (!entity) {
+    entity = repo.create({
+      id: uuidv4(),
+      companyId: seed.companyId,
+      priceListId: seed.priceListId,
+      productVariantId: seed.productVariantId,
+      uomId: seed.uomId,
+      price: seed.price,
+      validFrom,
+      validTo,
+      status: seed.status,
+    });
+  } else {
+    entity.price = seed.price;
+    entity.validTo = validTo;
+    entity.status = seed.status;
+    const restorableEntity = entity as PriceListItem & { deletedAt?: Date | null };
+    if (restorableEntity.deletedAt) {
+      restorableEntity.deletedAt = null;
+    }
+  }
+
+  await repo.save(entity);
+}
+
+function scaledPrice(basePrice: number, factor: number, discountRate: number): string {
+  return money(basePrice * factor * (1 - discountRate));
+}
+
+function shouldSeedPromoPrice(sku: string): boolean {
+  const hash = sku
+    .split('')
+    .reduce((sum, character) => sum + character.charCodeAt(0), 0);
+  return hash % 5 === 0;
+}
+
 async function ensureAccountingAccounts(
   repo: ReturnType<typeof AppDataSource.getRepository<Account>>,
   companyId: string,
@@ -749,6 +1391,25 @@ async function alignExistingSuppliers(
     }
     if (supplier.displayName === null) {
       supplier.displayName = supplier.name;
+      changed = true;
+    }
+    if (!supplier.country) {
+      supplier.country =
+        supplier.email?.endsWith('.th')
+          ? 'Thailand'
+          : supplier.email?.endsWith('.vn')
+            ? 'Vietnam'
+            : supplier.email?.endsWith('.bd')
+              ? 'Bangladesh'
+              : supplier.email?.endsWith('.id')
+                ? 'Indonesia'
+                : supplier.email?.endsWith('.tr')
+                  ? 'Turkey'
+                  : supplier.email?.endsWith('.it')
+                    ? 'Italy'
+                    : supplier.email?.endsWith('.cn')
+                      ? 'China'
+                      : 'Myanmar';
       changed = true;
     }
     if (supplier.status !== SupplierStatus.Active) {
@@ -1367,6 +2028,478 @@ async function ensureLeaveRequests(
   );
 }
 
+function decimalToCents(value: string | null | undefined): number {
+  if (!value) return 0;
+  return Math.round(Number(value) * 100);
+}
+
+function centsToMoney(value: number): string {
+  return (value / 100).toFixed(2);
+}
+
+async function ensurePayrollComponents(
+  repo: ReturnType<typeof AppDataSource.getRepository<PayrollComponent>>,
+  companyId: string,
+  adminUserId: string,
+): Promise<Map<string, PayrollComponent>> {
+  const map = new Map<string, PayrollComponent>();
+
+  for (const seed of PAYROLL_COMPONENT_BLUEPRINTS) {
+    let entity = await findSeedRow(repo, { companyId, code: seed.code });
+    if (!entity) {
+      entity = repo.create({
+        id: uuidv4(),
+        companyId,
+        code: seed.code,
+        name: seed.name,
+        type: seed.type,
+        calculationType: seed.calculationType,
+        fixedAmount: seed.fixedAmount,
+        percentage: seed.percentage,
+        isTaxable: seed.isTaxable,
+        isActive: true,
+        createdBy: adminUserId,
+        updatedBy: adminUserId,
+      });
+    } else {
+      entity.code = seed.code;
+      entity.name = seed.name;
+      entity.type = seed.type;
+      entity.calculationType = seed.calculationType;
+      entity.fixedAmount = seed.fixedAmount;
+      entity.percentage = seed.percentage;
+      entity.isTaxable = seed.isTaxable;
+      entity.isActive = true;
+      entity.updatedBy = adminUserId;
+      entity.createdBy ??= adminUserId;
+    }
+
+    map.set(seed.code, await repo.save(entity));
+  }
+
+  return map;
+}
+
+async function ensureEmployeeCompensations(
+  repo: ReturnType<typeof AppDataSource.getRepository<EmployeeCompensation>>,
+  companyId: string,
+  employees: Employee[],
+  adminUserId: string,
+): Promise<void> {
+  const employeesByCode = new Map(
+    employees.map((employee) => [employee.employeeCode, employee]),
+  );
+
+  for (const seed of PAYROLL_COMPENSATION_BLUEPRINTS) {
+    const employee = employeesByCode.get(seed.employeeCode);
+    if (!employee) continue;
+
+    let entity = await findSeedRow(repo, {
+      employeeId: employee.id,
+      effectiveFrom: '2026-01-15',
+    });
+    if (!entity) {
+      entity = repo.create({
+        id: uuidv4(),
+        companyId,
+        employeeId: employee.id,
+        effectiveFrom: '2026-01-15',
+        effectiveTo: null,
+        baseSalary: seed.baseSalary,
+        currency: PRICE_CURRENCY,
+        payFrequency: PayFrequency.Monthly,
+        createdBy: adminUserId,
+        updatedBy: adminUserId,
+      });
+    } else {
+      entity.companyId = companyId;
+      entity.employeeId = employee.id;
+      entity.effectiveFrom = '2026-01-15';
+      entity.effectiveTo = null;
+      entity.baseSalary = seed.baseSalary;
+      entity.currency = PRICE_CURRENCY;
+      entity.payFrequency = PayFrequency.Monthly;
+      entity.updatedBy = adminUserId;
+      entity.createdBy ??= adminUserId;
+    }
+
+    await repo.save(entity);
+  }
+}
+
+async function ensureEmployeePayrollComponents(
+  repo: ReturnType<typeof AppDataSource.getRepository<EmployeePayrollComponent>>,
+  employees: Employee[],
+  componentsByCode: Map<string, PayrollComponent>,
+  adminUserId: string,
+): Promise<void> {
+  const employeesByCode = new Map(
+    employees.map((employee) => [employee.employeeCode, employee]),
+  );
+
+  for (const seed of EMPLOYEE_PAYROLL_COMPONENT_BLUEPRINTS) {
+    const employee = employeesByCode.get(seed.employeeCode);
+    const component = componentsByCode.get(seed.componentCode);
+    if (!employee || !component) continue;
+
+    const assignmentAmount = 'amount' in seed ? seed.amount : undefined;
+
+    let entity = await findSeedRow(repo, {
+      employeeId: employee.id,
+      payrollComponentId: component.id,
+      effectiveFrom: '2026-01-15',
+    });
+    if (!entity) {
+      entity = repo.create({
+        id: uuidv4(),
+        employeeId: employee.id,
+        payrollComponentId: component.id,
+        amount: assignmentAmount ?? null,
+        percentage: null,
+        effectiveFrom: '2026-01-15',
+        effectiveTo: null,
+        createdBy: adminUserId,
+      });
+    } else {
+      entity.employeeId = employee.id;
+      entity.payrollComponentId = component.id;
+      entity.amount = assignmentAmount ?? null;
+      entity.percentage = null;
+      entity.effectiveFrom = '2026-01-15';
+      entity.effectiveTo = null;
+      entity.createdBy ??= adminUserId;
+    }
+
+    await repo.save(entity);
+  }
+}
+
+async function ensurePayrollConfiguration(
+  repo: ReturnType<typeof AppDataSource.getRepository<PayrollConfiguration>>,
+  companyId: string,
+  adminUserId: string,
+): Promise<void> {
+  let entity = await findSeedRow(repo, { companyId });
+  if (!entity) {
+    entity = repo.create({
+      id: uuidv4(),
+      companyId,
+      defaultCurrency: PRICE_CURRENCY,
+      unpaidLeaveCalculation: UnpaidLeaveCalculation.DailyRate,
+      workingDaysPerMonth: 22,
+      createdBy: adminUserId,
+      updatedBy: adminUserId,
+    });
+  } else {
+    entity.defaultCurrency = PRICE_CURRENCY;
+    entity.unpaidLeaveCalculation = UnpaidLeaveCalculation.DailyRate;
+    entity.workingDaysPerMonth = 22;
+    entity.updatedBy = adminUserId;
+    entity.createdBy ??= adminUserId;
+  }
+
+  await repo.save(entity);
+}
+
+async function ensurePayrollPeriodsAndRuns(
+  periodRepo: ReturnType<typeof AppDataSource.getRepository<PayrollPeriod>>,
+  periodCounterRepo: ReturnType<
+    typeof AppDataSource.getRepository<CompanyPayrollPeriodCounter>
+  >,
+  runRepo: ReturnType<typeof AppDataSource.getRepository<PayrollRun>>,
+  runCounterRepo: ReturnType<
+    typeof AppDataSource.getRepository<CompanyPayrollRunCounter>
+  >,
+  runEmployeeRepo: ReturnType<
+    typeof AppDataSource.getRepository<PayrollRunEmployee>
+  >,
+  runEmployeeItemRepo: ReturnType<
+    typeof AppDataSource.getRepository<PayrollRunEmployeeItem>
+  >,
+  employees: Employee[],
+  departmentsByCode: Map<string, Department>,
+  designationsByCode: Map<string, Designation>,
+  componentsByCode: Map<string, PayrollComponent>,
+  adminUserId: string,
+  companyId: string,
+): Promise<void> {
+  let periodCounter = await periodCounterRepo.findOne({
+    where: { companyId, year: 2026 },
+  });
+  if (!periodCounter) {
+    periodCounter = periodCounterRepo.create({
+      companyId,
+      year: 2026,
+      lastSequence: PAYROLL_PERIOD_BLUEPRINTS.length,
+    });
+  } else {
+    periodCounter.lastSequence = Math.max(
+      periodCounter.lastSequence,
+      PAYROLL_PERIOD_BLUEPRINTS.length,
+    );
+  }
+  await periodCounterRepo.save(periodCounter);
+
+  let runCounter = await runCounterRepo.findOne({
+    where: { companyId, year: 2026 },
+  });
+  if (!runCounter) {
+    runCounter = runCounterRepo.create({
+      companyId,
+      year: 2026,
+      lastSequence: 1,
+    });
+  } else {
+    runCounter.lastSequence = Math.max(runCounter.lastSequence, 1);
+  }
+  await runCounterRepo.save(runCounter);
+
+  const employeesByCode = new Map(
+    employees.map((employee) => [employee.employeeCode, employee]),
+  );
+  const departmentNameByEmployeeCode = new Map<string, string | null>();
+  const designationNameByEmployeeCode = new Map<string, string | null>();
+  for (const blueprint of EMPLOYEE_BLUEPRINTS) {
+    departmentNameByEmployeeCode.set(
+      blueprint.code,
+      departmentsByCode.get(blueprint.departmentCode)?.name ?? null,
+    );
+    designationNameByEmployeeCode.set(
+      blueprint.code,
+      designationsByCode.get(blueprint.designationCode)?.name ?? null,
+    );
+  }
+
+  const periodByNumber = new Map<string, PayrollPeriod>();
+  for (const seed of PAYROLL_PERIOD_BLUEPRINTS) {
+    let period = await findSeedRow(periodRepo, { companyId, periodNumber: seed.periodNumber });
+    if (!period) {
+      period = periodRepo.create({
+        id: uuidv4(),
+        companyId,
+        periodNumber: seed.periodNumber,
+        name: seed.name,
+        startDate: seed.startDate,
+        endDate: seed.endDate,
+        payDate: seed.payDate,
+        status: seed.status,
+        createdBy: adminUserId,
+        updatedBy: adminUserId,
+      });
+    } else {
+      period.name = seed.name;
+      period.startDate = seed.startDate;
+      period.endDate = seed.endDate;
+      period.payDate = seed.payDate;
+      period.status = seed.status;
+      period.updatedBy = adminUserId;
+      period.createdBy ??= adminUserId;
+    }
+
+    periodByNumber.set(seed.periodNumber, await periodRepo.save(period));
+  }
+
+  const finalizedPeriod = periodByNumber.get('PP-2026-000001');
+  if (!finalizedPeriod) return;
+
+  let run = await findSeedRow(runRepo, {
+    companyId,
+    payrollPeriodId: finalizedPeriod.id,
+  });
+  if (!run) {
+    run = runRepo.create({
+      id: uuidv4(),
+      companyId,
+      payrollPeriodId: finalizedPeriod.id,
+      runNumber: 'PR-2026-000001',
+      status: PayrollRunStatus.Finalized,
+      employeeCount: 0,
+      totalGrossPay: '0.00',
+      totalDeductions: '0.00',
+      totalNetPay: '0.00',
+      startedAt: new Date('2026-08-04T09:00:00.000Z'),
+      completedAt: new Date('2026-08-04T09:15:00.000Z'),
+      finalizedAt: new Date('2026-08-05T09:00:00.000Z'),
+      createdBy: adminUserId,
+      finalizedBy: adminUserId,
+    });
+  } else {
+    run.runNumber = 'PR-2026-000001';
+    run.status = PayrollRunStatus.Finalized;
+    run.startedAt = new Date('2026-08-04T09:00:00.000Z');
+    run.completedAt = new Date('2026-08-04T09:15:00.000Z');
+    run.finalizedAt = new Date('2026-08-05T09:00:00.000Z');
+    run.finalizedBy = adminUserId;
+    run.createdBy ??= adminUserId;
+  }
+  run = await runRepo.save(run);
+
+  const compensationByEmployeeCode = new Map(
+    PAYROLL_COMPENSATION_BLUEPRINTS.map((seed) => [seed.employeeCode, seed]),
+  );
+  const assignmentsByEmployeeCode = new Map<
+    string,
+    (typeof EMPLOYEE_PAYROLL_COMPONENT_BLUEPRINTS)[number][]
+  >();
+  for (const assignment of EMPLOYEE_PAYROLL_COMPONENT_BLUEPRINTS) {
+    const existing = assignmentsByEmployeeCode.get(assignment.employeeCode) ?? [];
+    existing.push(assignment);
+    assignmentsByEmployeeCode.set(assignment.employeeCode, existing);
+  }
+
+  let totalGrossCents = 0;
+  let totalDeductionCents = 0;
+  let totalNetCents = 0;
+  let seededEmployeeCount = 0;
+
+  const runEmployeesToSeed: Array<{
+    entity: PayrollRunEmployee;
+    items: Array<{
+      payrollComponentId: string;
+      componentNameSnapshot: string;
+      componentCodeSnapshot: string;
+      type: PayrollComponentType;
+      calculationTypeSnapshot: PayrollCalculationType;
+      amount: string;
+    }>;
+  }> = [];
+
+  for (const [employeeCode, compensation] of compensationByEmployeeCode) {
+    const employee = employeesByCode.get(employeeCode);
+    if (!employee) continue;
+
+    const baseSalaryCents = decimalToCents(compensation.baseSalary);
+    const assignmentSeeds = assignmentsByEmployeeCode.get(employeeCode) ?? [];
+    const items = assignmentSeeds
+      .map((assignment) => {
+        const component = componentsByCode.get(assignment.componentCode);
+        if (!component) return null;
+
+        const assignmentAmount =
+          'amount' in assignment ? assignment.amount : undefined;
+
+        let amountCents = 0;
+        if (assignmentAmount) {
+          amountCents = decimalToCents(assignmentAmount);
+        } else if (component.fixedAmount) {
+          amountCents = decimalToCents(component.fixedAmount);
+        } else if (component.percentage) {
+          amountCents = Math.round(
+            (baseSalaryCents * Number(component.percentage)) / 100,
+          );
+        }
+
+        return {
+          payrollComponentId: component.id,
+          componentNameSnapshot: component.name,
+          componentCodeSnapshot: component.code,
+          type: component.type,
+          calculationTypeSnapshot: component.calculationType,
+          amountCents,
+        };
+      })
+      .filter(
+        (
+          item,
+        ): item is {
+          payrollComponentId: string;
+          componentNameSnapshot: string;
+          componentCodeSnapshot: string;
+          type: PayrollComponentType;
+          calculationTypeSnapshot: PayrollCalculationType;
+          amountCents: number;
+        } => item !== null,
+      );
+
+    const grossCents =
+      baseSalaryCents +
+      items
+        .filter((item) => item.type === PayrollComponentType.Earning)
+        .reduce((sum, item) => sum + item.amountCents, 0);
+    const deductionCents = items
+      .filter((item) => item.type === PayrollComponentType.Deduction)
+      .reduce((sum, item) => sum + item.amountCents, 0);
+    const netCents = grossCents - deductionCents;
+
+    totalGrossCents += grossCents;
+    totalDeductionCents += deductionCents;
+    totalNetCents += netCents;
+    seededEmployeeCount += 1;
+
+    let runEmployee = await findSeedRow(runEmployeeRepo, {
+      payrollRunId: run.id,
+      employeeId: employee.id,
+    });
+    if (!runEmployee) {
+      runEmployee = runEmployeeRepo.create({
+        id: uuidv4(),
+        payrollRunId: run.id,
+        employeeId: employee.id,
+        employeeCodeSnapshot: employee.employeeCode,
+        employeeNameSnapshot: employee.displayName,
+        departmentSnapshot:
+          departmentNameByEmployeeCode.get(employeeCode) ?? null,
+        designationSnapshot:
+          designationNameByEmployeeCode.get(employeeCode) ?? null,
+        baseSalarySnapshot: compensation.baseSalary,
+        grossPay: centsToMoney(grossCents),
+        totalDeductions: centsToMoney(deductionCents),
+        netPay: centsToMoney(netCents),
+        status: PayrollRunEmployeeStatus.Finalized,
+      });
+    } else {
+      runEmployee.employeeCodeSnapshot = employee.employeeCode;
+      runEmployee.employeeNameSnapshot = employee.displayName;
+      runEmployee.departmentSnapshot =
+        departmentNameByEmployeeCode.get(employeeCode) ?? null;
+      runEmployee.designationSnapshot =
+        designationNameByEmployeeCode.get(employeeCode) ?? null;
+      runEmployee.baseSalarySnapshot = compensation.baseSalary;
+      runEmployee.grossPay = centsToMoney(grossCents);
+      runEmployee.totalDeductions = centsToMoney(deductionCents);
+      runEmployee.netPay = centsToMoney(netCents);
+      runEmployee.status = PayrollRunEmployeeStatus.Finalized;
+    }
+
+    runEmployeesToSeed.push({
+      entity: await runEmployeeRepo.save(runEmployee),
+      items: items.map((item) => ({
+        payrollComponentId: item.payrollComponentId,
+        componentNameSnapshot: item.componentNameSnapshot,
+        componentCodeSnapshot: item.componentCodeSnapshot,
+        type: item.type,
+        calculationTypeSnapshot: item.calculationTypeSnapshot,
+        amount: centsToMoney(item.amountCents),
+      })),
+    });
+  }
+
+  run.employeeCount = seededEmployeeCount;
+  run.totalGrossPay = centsToMoney(totalGrossCents);
+  run.totalDeductions = centsToMoney(totalDeductionCents);
+  run.totalNetPay = centsToMoney(totalNetCents);
+  run = await runRepo.save(run);
+
+  for (const seeded of runEmployeesToSeed) {
+    await runEmployeeItemRepo.delete({
+      payrollRunEmployeeId: seeded.entity.id,
+    });
+    for (const item of seeded.items) {
+      await runEmployeeItemRepo.save(
+        runEmployeeItemRepo.create({
+          payrollRunEmployeeId: seeded.entity.id,
+          payrollComponentId: item.payrollComponentId,
+          componentNameSnapshot: item.componentNameSnapshot,
+          componentCodeSnapshot: item.componentCodeSnapshot,
+          type: item.type,
+          calculationTypeSnapshot: item.calculationTypeSnapshot,
+          amount: item.amount,
+        }),
+      );
+    }
+  }
+}
+
 async function ensureUserCompany(
   repo: ReturnType<typeof AppDataSource.getRepository<UserCompany>>,
   userId: string,
@@ -1434,6 +2567,6 @@ async function ensureUserWarehouse(
 }
 
 seedLinkedBusinessData().catch((error: unknown) => {
-  console.error('Linked business data seed failed.', error);
+  logScriptFailure('Linked business data seed failed.', error, logger);
   process.exit(1);
 });

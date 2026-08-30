@@ -7,6 +7,7 @@ import { Sale } from '../../sales/entities/sale.entity';
 import { SaleStatus } from '../../sales/entities/sale-status.enum';
 import { SaleItem } from '../../sales/entities/sale-item.entity';
 import { WarehouseStock } from '../../inventory/entities/warehouse-stock.entity';
+import { Warehouse } from '../../organization/entities/warehouse.entity';
 import { LoyaltyService } from '../../loyalty/services/loyalty.service';
 import { TransactionService } from '../../../core/transaction/transaction.service';
 import { ErrorCode } from '../../../core/errors/error-codes';
@@ -104,6 +105,15 @@ describe('SaleReturnsService', () => {
       onHandQuantity: 5,
       ...overrides,
     }) as WarehouseStock;
+
+  const buildWarehouse = (overrides: Record<string, unknown> = {}) =>
+    ({
+      id: 'wh-1',
+      companyId: 'company-a',
+      branchId: 'branch-1',
+      status: 'ACTIVE',
+      ...overrides,
+    }) as Warehouse;
 
   beforeEach(() => {
     saleReturnRepository = { findOne: jest.fn() };
@@ -254,6 +264,9 @@ describe('SaleReturnsService', () => {
             },
           ]);
         }
+        if (entity === Warehouse) {
+          return Promise.resolve([]);
+        }
         return Promise.resolve([]);
       });
       manager.findOneOrFail.mockResolvedValue(buildSale());
@@ -291,6 +304,77 @@ describe('SaleReturnsService', () => {
       expect(movement).toBeDefined();
       expect(movement?.data.quantityChange).toBe(3);
       expect(stock.onHandQuantity).toBe(8); // 5 + 3
+    });
+
+    it('auto-backs a legacy sale into its only active branch warehouse before restocking', async () => {
+      manager.find.mockImplementation((entity: unknown) => {
+        if (entity === SaleReturnItem) {
+          return Promise.resolve([
+            {
+              id: 'sri-1',
+              saleReturnId: 'return-1',
+              productVariantId: 'variant-1',
+              quantity: 2,
+              condition: 'RESTOCK',
+            },
+          ]);
+        }
+        if (entity === Warehouse) {
+          return Promise.resolve([buildWarehouse()]);
+        }
+        return Promise.resolve([]);
+      });
+      manager.findOneOrFail.mockResolvedValue(buildSale({ warehouseId: null }));
+
+      const stock = buildStock({ onHandQuantity: 7 });
+      manager.createQueryBuilder.mockImplementation((entity: unknown) => {
+        if (entity === WarehouseStock) {
+          return {
+            where: jest.fn().mockReturnThis(),
+            andWhere: jest.fn().mockReturnThis(),
+            setLock: jest.fn().mockReturnThis(),
+            getOneOrFail: jest.fn().mockResolvedValue(stock),
+          };
+        }
+        if (entity === SaleReturn) return saleReturnQueryBuilder;
+        return counterQueryBuilder;
+      });
+
+      await service.confirm('return-1', 'company-a', 'user-1');
+
+      expect(manager.update).toHaveBeenCalledWith(
+        Sale,
+        'sale-1',
+        expect.objectContaining({ warehouseId: 'wh-1' }),
+      );
+    });
+
+    it('rejects a legacy sale with multiple active branch warehouses because the restock target is ambiguous', async () => {
+      manager.find.mockImplementation((entity: unknown) => {
+        if (entity === SaleReturnItem) {
+          return Promise.resolve([
+            {
+              id: 'sri-1',
+              saleReturnId: 'return-1',
+              productVariantId: 'variant-1',
+              quantity: 2,
+              condition: 'RESTOCK',
+            },
+          ]);
+        }
+        if (entity === Warehouse) {
+          return Promise.resolve([
+            buildWarehouse({ id: 'wh-1' }),
+            buildWarehouse({ id: 'wh-2' }),
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+      manager.findOneOrFail.mockResolvedValue(buildSale({ warehouseId: null }));
+
+      await expect(
+        service.confirm('return-1', 'company-a', 'user-1'),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.ValidationError });
     });
 
     it('rejects confirming a non-DRAFT return', async () => {

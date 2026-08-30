@@ -16,6 +16,7 @@ import { User } from '../../users/entities/user.entity';
 import { PurchaseOrderItem } from './purchase-order-item.entity';
 import { PurchaseOrderStatus } from './purchase-order-status.enum';
 import { PurchaseType } from './purchase-type.enum';
+import { SupplierQuotation } from './supplier-quotation.entity';
 
 /**
  * PurchaseOrder header (Phase 13 locked decisions). Company-scoped as the
@@ -99,6 +100,19 @@ export class PurchaseOrder extends BaseEntity {
   paymentTerm?: PaymentTerm | null;
 
   @Index()
+  @Column({
+    name: 'source_supplier_quotation_id',
+    type: 'char',
+    length: 36,
+    nullable: true,
+  })
+  sourceSupplierQuotationId!: string | null;
+
+  @ManyToOne(() => SupplierQuotation, { onDelete: 'RESTRICT', nullable: true })
+  @JoinColumn({ name: 'source_supplier_quotation_id' })
+  sourceSupplierQuotation?: SupplierQuotation | null;
+
+  @Index()
   @Column({ name: 'transaction_date', type: 'timestamp' })
   transactionDate!: Date;
 
@@ -180,6 +194,36 @@ export class PurchaseOrder extends BaseEntity {
   @ManyToOne(() => User, { onDelete: 'RESTRICT', nullable: true })
   @JoinColumn({ name: 'updated_by' })
   updatedByUser?: User | null;
+
+  @Column({ name: 'submitted_at', type: 'timestamp', nullable: true })
+  submittedAt!: Date | null;
+
+  @Column({ name: 'submitted_by', type: 'char', length: 36, nullable: true })
+  submittedBy!: string | null;
+
+  @Column({ name: 'approved_at', type: 'timestamp', nullable: true })
+  approvedAt!: Date | null;
+
+  @Column({ name: 'approved_by', type: 'char', length: 36, nullable: true })
+  approvedBy!: string | null;
+
+  @Column({ name: 'rejected_at', type: 'timestamp', nullable: true })
+  rejectedAt!: Date | null;
+
+  @Column({ name: 'rejected_by', type: 'char', length: 36, nullable: true })
+  rejectedBy!: string | null;
+
+  @Column({ name: 'rejected_reason', type: 'varchar', length: 500, nullable: true })
+  rejectedReason!: string | null;
+
+  @Column({ name: 'closed_at', type: 'timestamp', nullable: true })
+  closedAt!: Date | null;
+
+  @Column({ name: 'closed_by', type: 'char', length: 36, nullable: true })
+  closedBy!: string | null;
+
+  @Column({ name: 'close_reason', type: 'varchar', length: 500, nullable: true })
+  closeReason!: string | null;
 
   @OneToMany(() => PurchaseOrderItem, (item) => item.purchaseOrder)
   items?: PurchaseOrderItem[];

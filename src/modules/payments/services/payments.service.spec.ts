@@ -15,6 +15,7 @@ import { SupplierStatus } from '../../customer-supplier/entities/supplier-status
 import { PaymentMethodsService } from './payment-methods.service';
 import { SalesService } from '../../sales/services/sales.service';
 import { PurchaseOrdersService } from '../../purchase/services/purchase-orders.service';
+import { PurchaseInvoicesService } from '../../purchase/services/purchase-invoices.service';
 import { SaleReturnsService } from '../../sales-returns/services/sale-returns.service';
 import { AccountingPostingService } from '../../accounting/services/accounting-posting.service';
 import { ErrorCode } from '../../../core/errors/error-codes';
@@ -47,6 +48,9 @@ describe('PaymentsService', () => {
   let salesService: jest.Mocked<Pick<SalesService, 'applyPayment'>>;
   let purchaseOrdersService: jest.Mocked<
     Pick<PurchaseOrdersService, 'applyPayment'>
+  >;
+  let purchaseInvoicesService: jest.Mocked<
+    Pick<PurchaseInvoicesService, 'applyPayment' | 'unapplyPayment'>
   >;
   let saleReturnsService: jest.Mocked<Pick<SaleReturnsService, 'applyRefund'>>;
   let accountingPostingService: jest.Mocked<
@@ -162,6 +166,10 @@ describe('PaymentsService', () => {
     purchaseOrdersService = {
       applyPayment: jest.fn().mockResolvedValue(undefined),
     };
+    purchaseInvoicesService = {
+      applyPayment: jest.fn().mockResolvedValue(undefined),
+      unapplyPayment: jest.fn().mockResolvedValue(undefined),
+    };
     saleReturnsService = {
       applyRefund: jest.fn().mockResolvedValue(undefined),
     };
@@ -185,6 +193,7 @@ describe('PaymentsService', () => {
       paymentMethodsService as unknown as PaymentMethodsService,
       salesService as unknown as SalesService,
       purchaseOrdersService as unknown as PurchaseOrdersService,
+      purchaseInvoicesService as unknown as PurchaseInvoicesService,
       saleReturnsService as unknown as SaleReturnsService,
       accountingPostingService as unknown as AccountingPostingService,
       outboxService,
@@ -219,8 +228,8 @@ describe('PaymentsService', () => {
             customerId: undefined,
             allocations: [
               {
-                referenceType: PaymentReferenceType.PurchaseOrder,
-                referenceId: 'po-1',
+                referenceType: PaymentReferenceType.PurchaseInvoice,
+                referenceId: 'pinv-1',
                 allocatedAmount: '100.00',
               },
             ],
@@ -386,7 +395,7 @@ describe('PaymentsService', () => {
       });
     });
 
-    it('creates a PAYMENT and applies it to the PurchaseOrder, never the SalesService', async () => {
+    it('creates a PAYMENT and applies it to the PurchaseInvoice, never the SalesService', async () => {
       const result = await service.create(
         'company-a',
         'user-1',
@@ -396,8 +405,8 @@ describe('PaymentsService', () => {
           supplierId: 'sup-1',
           allocations: [
             {
-              referenceType: PaymentReferenceType.PurchaseOrder,
-              referenceId: 'po-1',
+              referenceType: PaymentReferenceType.PurchaseInvoice,
+              referenceId: 'pinv-1',
               allocatedAmount: '100.00',
             },
           ],
@@ -405,13 +414,14 @@ describe('PaymentsService', () => {
       );
 
       expect(result.wasExisting).toBe(false);
-      expect(purchaseOrdersService.applyPayment).toHaveBeenCalledWith(
-        'po-1',
+      expect(purchaseInvoicesService.applyPayment).toHaveBeenCalledWith(
+        'pinv-1',
         'company-a',
         100,
         'user-1',
         manager,
       );
+      expect(purchaseOrdersService.applyPayment).not.toHaveBeenCalled();
       expect(salesService.applyPayment).not.toHaveBeenCalled();
     });
 

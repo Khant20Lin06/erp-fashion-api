@@ -51,7 +51,7 @@ export class AttendanceService {
 
     const qb = this.attendanceRepository
       .createQueryBuilder('attendance')
-      .innerJoin(Employee, 'employee', 'employee.id = attendance.employeeId');
+      .innerJoinAndSelect('attendance.employee', 'employee');
 
     if (scope.ownOnly) {
       qb.where('employee.userId = :userId', { userId });
@@ -108,7 +108,7 @@ export class AttendanceService {
   ): Promise<AttendanceRecord> {
     const qb = this.attendanceRepository
       .createQueryBuilder('attendance')
-      .innerJoin(Employee, 'employee', 'employee.id = attendance.employeeId')
+      .innerJoinAndSelect('attendance.employee', 'employee')
       .where('attendance.id = :id', { id });
 
     if (scope.ownOnly) {
@@ -169,7 +169,8 @@ export class AttendanceService {
       note: dto.note ?? null,
     });
     this.assertCheckInOut(entity.checkInAt, entity.checkOutAt);
-    return this.attendanceRepository.save(entity);
+    const saved = await this.attendanceRepository.save(entity);
+    return Object.assign(saved, { employee });
   }
 
   async update(
@@ -195,7 +196,11 @@ export class AttendanceService {
       entity.note = dto.note?.trim() || null;
     }
     this.assertCheckInOut(entity.checkInAt, entity.checkOutAt);
-    return this.attendanceRepository.save(entity);
+    const saved = await this.attendanceRepository.save(entity);
+    const employee = await this.employeeRepository.findOne({
+      where: { id: saved.employeeId, companyId },
+    });
+    return Object.assign(saved, { employee: employee ?? undefined });
   }
 
   private assertCheckInOut(

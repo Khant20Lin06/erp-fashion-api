@@ -111,12 +111,22 @@ export interface PayrollComponentResponseDto {
   percentage: string | null;
   isTaxable: boolean;
   isActive: boolean;
+  assignmentCount: number;
+  historyCount: number;
+  canDelete: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
 
+export type PayrollComponentUsageDto = {
+  assignmentCount: number;
+  historyCount: number;
+  canDelete: boolean;
+};
+
 export function toPayrollComponentResponseDto(
   component: PayrollComponent,
+  usage?: PayrollComponentUsageDto,
 ): PayrollComponentResponseDto {
   return {
     id: component.id,
@@ -129,6 +139,9 @@ export function toPayrollComponentResponseDto(
     percentage: component.percentage,
     isTaxable: component.isTaxable,
     isActive: component.isActive,
+    assignmentCount: usage?.assignmentCount ?? 0,
+    historyCount: usage?.historyCount ?? 0,
+    canDelete: usage?.canDelete ?? true,
     createdAt: component.createdAt,
     updatedAt: component.updatedAt,
   };

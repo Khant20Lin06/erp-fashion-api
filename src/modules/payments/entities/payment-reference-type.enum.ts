@@ -7,6 +7,7 @@
 export enum PaymentReferenceType {
   Sale = 'SALE',
   PurchaseOrder = 'PURCHASE_ORDER',
+  PurchaseInvoice = 'PURCHASE_INVOICE',
   /** Additive member: a REFUND payment allocates against a confirmed SaleReturn. */
   SaleReturn = 'SALE_RETURN',
 }

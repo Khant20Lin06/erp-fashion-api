@@ -71,6 +71,24 @@ export class PaymentResponseDto {
 
   @ApiPropertyOptional({ type: [PaymentAllocationResponseDto] })
   allocations?: PaymentAllocationResponseDto[];
+
+  @ApiPropertyOptional({ example: '2026-08-16T10:00:00.000Z', nullable: true })
+  reversedAt!: Date | null;
+
+  @ApiPropertyOptional({ format: 'uuid', nullable: true })
+  reversedBy!: string | null;
+
+  @ApiPropertyOptional({ example: 'Supplier payment reversed', nullable: true })
+  reversalReason!: string | null;
+
+  @ApiPropertyOptional({ example: '2026-08-17T10:00:00.000Z', nullable: true })
+  reallocatedAt!: Date | null;
+
+  @ApiPropertyOptional({ format: 'uuid', nullable: true })
+  reallocatedBy!: string | null;
+
+  @ApiPropertyOptional({ example: 'Moved payment to corrected invoice', nullable: true })
+  reallocationReason!: string | null;
 }
 
 export class PaymentListResponseDto {
@@ -109,5 +127,11 @@ export function toPaymentResponseDto(entity: Payment): PaymentResponseDto {
     allocations: entity.allocations
       ? entity.allocations.map(toPaymentAllocationResponseDto)
       : undefined,
+    reversedAt: entity.reversedAt,
+    reversedBy: entity.reversedBy,
+    reversalReason: entity.reversalReason,
+    reallocatedAt: entity.reallocatedAt,
+    reallocatedBy: entity.reallocatedBy,
+    reallocationReason: entity.reallocationReason,
   };
 }

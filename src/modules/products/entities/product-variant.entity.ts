@@ -3,6 +3,7 @@ import { BaseEntity } from '../../../database/base.entity';
 import { Company } from '../../organization/entities/company.entity';
 import { Product } from './product.entity';
 import { ProductVariantStatus } from './product-variant-status.enum';
+import { Uom } from '../../uom/entities/uom.entity';
 
 /**
  * The stockable/sellable unit (Phase 10 analysis §6, approved — "the
@@ -56,6 +57,13 @@ export class ProductVariant extends BaseEntity {
 
   @Column({ name: 'selling_price', type: 'decimal', precision: 12, scale: 2 })
   sellingPrice!: string;
+
+  @Column({ name: 'base_uom_id', type: 'char', length: 36, nullable: true })
+  baseUomId!: string | null;
+
+  @ManyToOne(() => Uom, { onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'base_uom_id' })
+  baseUom!: Uom | null;
 
   @Index()
   @Column({

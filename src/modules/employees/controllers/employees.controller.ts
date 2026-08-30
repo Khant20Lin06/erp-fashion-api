@@ -282,4 +282,23 @@ export class EmployeesController {
     const employee = await this.employeesService.deactivate(id);
     return toEmployeeResponseDto(employee);
   }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermission('employees.update')
+  async deletePermanent(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('companyId') companyIdQuery?: string,
+  ): Promise<void> {
+    const scope = await resolveRequestCompanyBranchScope(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+      undefined,
+    );
+    await this.employeesService.findByIdInScope(id, scope);
+    await this.employeesService.deletePermanent(id);
+  }
 }

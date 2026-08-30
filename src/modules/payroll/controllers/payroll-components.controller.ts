@@ -53,8 +53,16 @@ export class PayrollComponentsController {
       query.companyId,
     );
     const result = await this.componentsService.findAll(companyId, query);
+    const usageById = await this.componentsService.getUsageSummaries(
+      result.data.map((component) => component.id),
+    );
     return {
-      data: result.data.map(toPayrollComponentResponseDto),
+      data: result.data.map((component) =>
+        toPayrollComponentResponseDto(
+          component,
+          usageById.get(component.id),
+        ),
+      ),
       meta: result.meta,
     };
   }
@@ -76,7 +84,10 @@ export class PayrollComponentsController {
       id,
       companyId,
     );
-    return toPayrollComponentResponseDto(entity);
+    return toPayrollComponentResponseDto(
+      entity,
+      await this.componentsService.getUsageSummary(entity.id),
+    );
   }
 
   @Post()
@@ -92,7 +103,10 @@ export class PayrollComponentsController {
       dto.companyId,
     );
     const entity = await this.componentsService.create(companyId, user.id, dto);
-    return toPayrollComponentResponseDto(entity);
+    return toPayrollComponentResponseDto(
+      entity,
+      await this.componentsService.getUsageSummary(entity.id),
+    );
   }
 
   @Patch(':id')
@@ -115,7 +129,10 @@ export class PayrollComponentsController {
       user.id,
       dto,
     );
-    return toPayrollComponentResponseDto(entity);
+    return toPayrollComponentResponseDto(
+      entity,
+      await this.componentsService.getUsageSummary(entity.id),
+    );
   }
 
   @Post(':id/activate')
@@ -137,7 +154,10 @@ export class PayrollComponentsController {
       companyId,
       user.id,
     );
-    return toPayrollComponentResponseDto(entity);
+    return toPayrollComponentResponseDto(
+      entity,
+      await this.componentsService.getUsageSummary(entity.id),
+    );
   }
 
   @Post(':id/deactivate')
@@ -159,7 +179,10 @@ export class PayrollComponentsController {
       companyId,
       user.id,
     );
-    return toPayrollComponentResponseDto(entity);
+    return toPayrollComponentResponseDto(
+      entity,
+      await this.componentsService.getUsageSummary(entity.id),
+    );
   }
 
   @Delete(':id')

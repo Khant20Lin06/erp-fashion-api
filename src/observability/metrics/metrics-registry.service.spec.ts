@@ -27,6 +27,9 @@ describe('MetricsRegistryService', () => {
     httpKeepAliveTimeoutMs: 5000,
     httpHeadersTimeoutMs: 60000,
     trustProxy: false,
+    rateLimitEnabled: true,
+    rateLimitMaxRequests: 300,
+    rateLimitWindowSeconds: 60,
   };
 
   beforeEach(() => {

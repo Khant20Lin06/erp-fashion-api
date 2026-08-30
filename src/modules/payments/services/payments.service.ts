@@ -12,6 +12,8 @@ import { PaymentMethodStatus } from '../entities/payment-method-status.enum';
 import { CompanyPaymentCounter } from '../entities/company-payment-counter.entity';
 import { CreatePaymentDto } from '../dto/create-payment.dto';
 import { ListPaymentsDto } from '../dto/list-payments.dto';
+import { ReversePaymentDto } from '../dto/reverse-payment.dto';
+import { ReallocatePaymentDto } from '../dto/reallocate-payment.dto';
 import { PaymentMethodsService } from './payment-methods.service';
 import { formatDocumentNumber } from '../../inventory/utils/document-number';
 import { retryOnDuplicateEntry } from '../../inventory/utils/upsert-retry';
@@ -26,6 +28,7 @@ import { Supplier as SupplierEntity } from '../../customer-supplier/entities/sup
 import { SupplierStatus } from '../../customer-supplier/entities/supplier-status.enum';
 import { SalesService } from '../../sales/services/sales.service';
 import { PurchaseOrdersService } from '../../purchase/services/purchase-orders.service';
+import { PurchaseInvoicesService } from '../../purchase/services/purchase-invoices.service';
 import { SaleReturnsService } from '../../sales-returns/services/sale-returns.service';
 import { AccountingPostingService } from '../../accounting/services/accounting-posting.service';
 import { AppException } from '../../../core/errors/app.exception';
@@ -51,7 +54,7 @@ export interface PaginatedPayments {
 /**
  * The only (referenceType, direction) combinations the locked spec allows
  * (§Transaction flow, step 5): a RECEIPT can only ever allocate against a
- * SALE, a PAYMENT can only ever allocate against a PURCHASE_ORDER. Any
+ * SALE, a PAYMENT can only ever allocate against a PURCHASE_INVOICE. Any
  * other combination is a 400 business-rule violation, checked before the
  * transaction opens.
  */
@@ -60,7 +63,7 @@ const VALID_DIRECTION_REFERENCE_PAIRS: Record<
   PaymentReferenceType
 > = {
   [PaymentDirection.Receipt]: PaymentReferenceType.Sale,
-  [PaymentDirection.Payment]: PaymentReferenceType.PurchaseOrder,
+  [PaymentDirection.Payment]: PaymentReferenceType.PurchaseInvoice,
   [PaymentDirection.Refund]: PaymentReferenceType.SaleReturn,
 };
 
@@ -87,6 +90,7 @@ export class PaymentsService {
     private readonly paymentMethodsService: PaymentMethodsService,
     private readonly salesService: SalesService,
     private readonly purchaseOrdersService: PurchaseOrdersService,
+    private readonly purchaseInvoicesService: PurchaseInvoicesService,
     private readonly saleReturnsService: SaleReturnsService,
     private readonly accountingPostingService: AccountingPostingService,
     private readonly outboxService: OutboxService,
@@ -314,6 +318,56 @@ export class PaymentsService {
     }
   }
 
+  private assertAllocationsFullyCoverAmount(
+    paymentAmount: number,
+    allocations: Array<{ allocatedAmount: string }>,
+  ): void {
+    const allocatedTotal = allocations.reduce(
+      (sum, allocation) => sum + Number(allocation.allocatedAmount),
+      0,
+    );
+    if (Math.abs(allocatedTotal - paymentAmount) > 1e-9) {
+      throw new AppException(
+        ErrorCode.ValidationError,
+        `Sum of allocations (${allocatedTotal.toFixed(2)}) must exactly match the payment amount (${paymentAmount.toFixed(2)})`,
+      );
+    }
+  }
+
+  private assertPurchaseInvoiceOnlyAllocations(
+    payment: Payment,
+    allocations: PaymentAllocation[],
+  ): void {
+    if (payment.direction !== PaymentDirection.Payment) {
+      throw new AppException(
+        ErrorCode.Conflict,
+        'Only supplier PAYMENT records support reversal and reallocation',
+      );
+    }
+    if (
+      allocations.some(
+        (allocation) =>
+          allocation.referenceType !== PaymentReferenceType.PurchaseInvoice,
+      )
+    ) {
+      throw new AppException(
+        ErrorCode.Conflict,
+        'Only purchase-invoice allocations support reversal and reallocation',
+      );
+    }
+  }
+
+  private buildAllocationTotals(
+    allocations: Array<{ referenceType: PaymentReferenceType; referenceId: string; allocatedAmount: string }>,
+  ): Map<string, number> {
+    const totals = new Map<string, number>();
+    for (const allocation of allocations) {
+      const key = `${allocation.referenceType}:${allocation.referenceId}`;
+      totals.set(key, (totals.get(key) ?? 0) + Number(allocation.allocatedAmount));
+    }
+    return totals;
+  }
+
   /**
    * Creates a Payment together with all of its PaymentAllocations, and
    * applies each allocation's amount to its target Sale/PurchaseOrder's
@@ -449,6 +503,16 @@ export class PaymentsService {
 
           if (target.referenceType === PaymentReferenceType.Sale) {
             await this.salesService.applyPayment(
+              target.referenceId,
+              companyId,
+              totalForTarget,
+              userId,
+              manager,
+            );
+          } else if (
+            target.referenceType === PaymentReferenceType.PurchaseInvoice
+          ) {
+            await this.purchaseInvoicesService.applyPayment(
               target.referenceId,
               companyId,
               totalForTarget,
@@ -624,6 +688,181 @@ export class PaymentsService {
       }
       throw error;
     }
+  }
+
+  async reverse(
+    id: string,
+    companyId: string,
+    userId: string,
+    dto: ReversePaymentDto,
+  ): Promise<Payment> {
+    return this.transactionService.run(async (manager) => {
+      const payment = await manager
+        .createQueryBuilder(Payment, 'payment')
+        .where('payment.id = :id', { id })
+        .andWhere('payment.companyId = :companyId', { companyId })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!payment) {
+        throw new AppException(ErrorCode.NotFound, 'Payment not found');
+      }
+      if (payment.status !== PaymentStatus.Confirmed) {
+        throw new AppException(
+          ErrorCode.Conflict,
+          `Cannot reverse a ${payment.status} payment`,
+        );
+      }
+
+      const allocations = await manager.find(PaymentAllocation, {
+        where: { paymentId: payment.id },
+      });
+      this.assertPurchaseInvoiceOnlyAllocations(payment, allocations);
+
+      const allocationTotals = [...this.buildAllocationTotals(allocations).entries()]
+        .map(([key, total]) => {
+          const [referenceType, referenceId] = key.split(':');
+          return { referenceType: referenceType as PaymentReferenceType, referenceId, total };
+        })
+        .sort((a, b) => a.referenceId.localeCompare(b.referenceId));
+
+      for (const allocation of allocationTotals) {
+        await this.purchaseInvoicesService.unapplyPayment(
+          allocation.referenceId,
+          companyId,
+          allocation.total,
+          userId,
+          manager,
+        );
+      }
+
+      payment.status = PaymentStatus.Cancelled;
+      payment.reversedAt = new Date();
+      payment.reversedBy = userId;
+      payment.reversalReason = dto.reason;
+      payment.updatedBy = userId;
+      await manager.update(Payment, payment.id, {
+        status: payment.status,
+        reversedAt: payment.reversedAt,
+        reversedBy: payment.reversedBy,
+        reversalReason: payment.reversalReason,
+        updatedBy: payment.updatedBy,
+      });
+
+      await this.accountingPostingService.reversePayment(
+        payment,
+        userId,
+        manager,
+        dto.reason,
+      );
+
+      return manager.findOneOrFail(Payment, {
+        where: { id: payment.id, companyId },
+        relations: { allocations: true },
+      });
+    });
+  }
+
+  async reallocate(
+    id: string,
+    companyId: string,
+    userId: string,
+    dto: ReallocatePaymentDto,
+  ): Promise<Payment> {
+    return this.transactionService.run(async (manager) => {
+      const payment = await manager
+        .createQueryBuilder(Payment, 'payment')
+        .where('payment.id = :id', { id })
+        .andWhere('payment.companyId = :companyId', { companyId })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!payment) {
+        throw new AppException(ErrorCode.NotFound, 'Payment not found');
+      }
+      if (payment.status !== PaymentStatus.Confirmed) {
+        throw new AppException(
+          ErrorCode.Conflict,
+          `Cannot reallocate a ${payment.status} payment`,
+        );
+      }
+
+      const currentAllocations = await manager.find(PaymentAllocation, {
+        where: { paymentId: payment.id },
+      });
+      this.assertPurchaseInvoiceOnlyAllocations(payment, currentAllocations);
+      this.assertAllocationsValid(
+        payment.direction,
+        Number(payment.amount),
+        dto.allocations,
+      );
+      this.assertAllocationsFullyCoverAmount(
+        Number(payment.amount),
+        dto.allocations,
+      );
+
+      const currentTotals = [...this.buildAllocationTotals(currentAllocations).entries()]
+        .map(([key, total]) => {
+          const [, referenceId] = key.split(':');
+          return { referenceId, total };
+        })
+        .sort((a, b) => a.referenceId.localeCompare(b.referenceId));
+
+      for (const allocation of currentTotals) {
+        await this.purchaseInvoicesService.unapplyPayment(
+          allocation.referenceId,
+          companyId,
+          allocation.total,
+          userId,
+          manager,
+        );
+      }
+
+      await manager.delete(PaymentAllocation, { paymentId: payment.id });
+
+      const newTotals = [...this.buildAllocationTotals(dto.allocations).entries()]
+        .map(([key, total]) => {
+          const [, referenceId] = key.split(':');
+          return { referenceId, total };
+        })
+        .sort((a, b) => a.referenceId.localeCompare(b.referenceId));
+
+      for (const allocation of newTotals) {
+        await this.purchaseInvoicesService.applyPayment(
+          allocation.referenceId,
+          companyId,
+          allocation.total,
+          userId,
+          manager,
+        );
+      }
+
+      for (const allocation of dto.allocations) {
+        const allocationRow = manager.create(PaymentAllocation, {
+          paymentId: payment.id,
+          referenceType: allocation.referenceType,
+          referenceId: allocation.referenceId,
+          allocatedAmount: Number(allocation.allocatedAmount).toFixed(2),
+        });
+        await manager.save(PaymentAllocation, allocationRow);
+      }
+
+      payment.reallocatedAt = new Date();
+      payment.reallocatedBy = userId;
+      payment.reallocationReason = dto.reason ?? null;
+      payment.updatedBy = userId;
+      await manager.update(Payment, payment.id, {
+        reallocatedAt: payment.reallocatedAt,
+        reallocatedBy: payment.reallocatedBy,
+        reallocationReason: payment.reallocationReason,
+        updatedBy: payment.updatedBy,
+      });
+
+      return manager.findOneOrFail(Payment, {
+        where: { id: payment.id, companyId },
+        relations: { allocations: true },
+      });
+    });
   }
 
   private isDuplicateIdempotencyKeyError(error: unknown): boolean {

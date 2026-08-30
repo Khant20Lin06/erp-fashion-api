@@ -16,6 +16,10 @@ export class CreatePurchaseOrderItemDto {
   @IsUUID()
   productVariantId!: string;
 
+  @IsOptional()
+  @IsUUID()
+  uomId?: string;
+
   @IsInt()
   @Min(1)
   quantity!: number;

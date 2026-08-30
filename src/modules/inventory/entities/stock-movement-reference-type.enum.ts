@@ -11,4 +11,5 @@ export enum StockMovementReferenceType {
   StockAdjustment = 'STOCK_ADJUSTMENT',
   /** Additive member (Returns/Discounts/Loyalty phase): points at SaleReturn.id. */
   SaleReturn = 'SALE_RETURN',
+  PurchaseReturn = 'PURCHASE_RETURN',
 }

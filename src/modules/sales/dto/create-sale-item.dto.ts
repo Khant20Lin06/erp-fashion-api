@@ -14,6 +14,10 @@ export class CreateSaleItemDto {
   @IsUUID()
   productVariantId!: string;
 
+  @IsOptional()
+  @IsUUID()
+  uomId?: string;
+
   @IsInt()
   @Min(1)
   quantity!: number;

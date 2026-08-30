@@ -46,13 +46,12 @@ export class PriceListItemsController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('priceListId', ParseUUIDPipe) priceListId: string,
     @Query() query: ListPriceListItemsDto,
-    @Query('companyId') companyIdQuery?: string,
   ): Promise<{ data: PriceListItemResponseDto[]; meta: unknown }> {
     const companyId = await resolveRequestCompanyId(
       this.dataScopeService,
       user.id,
       RESOURCE,
-      companyIdQuery,
+      query.companyId,
     );
     const result = await this.priceListItemsService.findAllForPriceList(
       priceListId,

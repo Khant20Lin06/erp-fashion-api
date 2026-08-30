@@ -38,12 +38,28 @@ describe('PasswordService', () => {
   });
 
   describe('validatePolicy', () => {
-    it('accepts a password meeting the minimum length', () => {
-      expect(service.validatePolicy('12345678')).toBe(true);
+    it('accepts a password meeting the minimum length and character diversity', () => {
+      expect(service.validatePolicy('correct-horse-battery-9')).toBe(true);
     });
 
     it('rejects a password shorter than the minimum length', () => {
-      expect(service.validatePolicy('short')).toBe(false);
+      expect(service.validatePolicy('short1!')).toBe(false);
+    });
+
+    it('rejects a password with no digit or symbol (letters only)', () => {
+      expect(service.validatePolicy('onlylettersnodigits')).toBe(false);
+    });
+
+    it('rejects a password with no letters (digits only)', () => {
+      expect(service.validatePolicy('123456789012')).toBe(false);
+    });
+
+    it('rejects a password on the common weak-password denylist', () => {
+      expect(service.validatePolicy('password1234')).toBe(false);
+    });
+
+    it('rejects a password over the maximum length', () => {
+      expect(service.validatePolicy(`a1${'x'.repeat(130)}`)).toBe(false);
     });
   });
 });
