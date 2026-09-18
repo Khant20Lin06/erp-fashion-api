@@ -3,8 +3,12 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Sale } from './entities/sale.entity';
 import { SaleItem } from './entities/sale-item.entity';
 import { CompanySaleCounter } from './entities/company-sale-counter.entity';
+import { PosShift } from './entities/pos-shift.entity';
+import { Payment } from '../payments/entities/payment.entity';
 import { SalesService } from './services/sales.service';
+import { PosShiftsService } from './services/pos-shifts.service';
 import { SalesController } from './controllers/sales.controller';
+import { PosShiftsController } from './controllers/pos-shifts.controller';
 import { AuthModule } from '../auth/auth.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { OrganizationModule } from '../organization/organization.module';
@@ -14,18 +18,15 @@ import { SalesAccountsModule } from '../sales-accounts/sales-accounts.module';
 import { LoyaltyModule } from '../loyalty/loyalty.module';
 import { PromotionsModule } from '../promotions/promotions.module';
 
-/**
- * Phase 12 — Sales. A single flat module directory
- * (`src/modules/sales/`), consistent with Phase 09/10/11's own module
- * shape. Depends on OrganizationModule (Company/Branch/Warehouse),
- * CustomerSupplierModule (Customer), ProductsModule (ProductVariant/
- * PriceList/PriceListItem), and SalesAccountsModule
- * (SalesAccountAccessService) — every dependency reused, none duplicated,
- * per the locked decisions.
- */
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Sale, SaleItem, CompanySaleCounter]),
+    TypeOrmModule.forFeature([
+      Sale,
+      SaleItem,
+      CompanySaleCounter,
+      PosShift,
+      Payment,
+    ]),
     AuthModule,
     RbacModule,
     OrganizationModule,
@@ -35,8 +36,8 @@ import { PromotionsModule } from '../promotions/promotions.module';
     LoyaltyModule,
     PromotionsModule,
   ],
-  controllers: [SalesController],
-  providers: [SalesService],
-  exports: [SalesService],
+  controllers: [SalesController, PosShiftsController],
+  providers: [SalesService, PosShiftsService],
+  exports: [SalesService, PosShiftsService],
 })
 export class SalesModule {}

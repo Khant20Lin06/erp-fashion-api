@@ -36,9 +36,11 @@ import { PaymentTerm } from '../modules/customer-supplier/entities/payment-term.
 import { CustomerAddress } from '../modules/customer-supplier/entities/customer-address.entity';
 import { SupplierAddress } from '../modules/customer-supplier/entities/supplier-address.entity';
 import { CustomerContact } from '../modules/customer-supplier/entities/customer-contact.entity';
+import { CustomerNote } from '../modules/customer-supplier/entities/customer-note.entity';
 import { SupplierContact } from '../modules/customer-supplier/entities/supplier-contact.entity';
 import { Sale } from '../modules/sales/entities/sale.entity';
 import { SaleItem } from '../modules/sales/entities/sale-item.entity';
+import { PosShift } from '../modules/sales/entities/pos-shift.entity';
 import { CompanySaleCounter } from '../modules/sales/entities/company-sale-counter.entity';
 import { PurchaseOrder } from '../modules/purchase/entities/purchase-order.entity';
 import { PurchaseOrderItem } from '../modules/purchase/entities/purchase-order-item.entity';
@@ -237,6 +239,8 @@ const entities = [
   AiKnowledgeDocument,
   AiKnowledgeChunk,
   AiToolAuditLog,
+  CustomerNote,
+  PosShift,
 ];
 
 export function buildDataSourceOptions(

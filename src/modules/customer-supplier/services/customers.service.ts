@@ -20,6 +20,9 @@ import {
 } from '../../../shared/dto/pagination.dto';
 import { resolveSortField } from '../../../shared/dto/resolve-sort-field';
 
+import { CustomerNote } from '../entities/customer-note.entity';
+import { Sale } from '../../sales/entities/sale.entity';
+
 export interface PaginatedCustomers {
   data: Customer[];
   meta: { page: number; limit: number; total: number };
@@ -52,6 +55,10 @@ export class CustomersService {
     private readonly branchesService: BranchesService,
     private readonly customerGroupsService: CustomerGroupsService,
     private readonly paymentTermsService: PaymentTermsService,
+    @InjectRepository(CustomerNote)
+    private readonly customerNoteRepository?: Repository<CustomerNote>,
+    @InjectRepository(Sale)
+    private readonly saleRepository?: Repository<Sale>,
   ) {}
 
   async findAll(
@@ -297,5 +304,138 @@ export class CustomersService {
   async remove(id: string, companyId: string): Promise<void> {
     const customer = await this.findByIdInCompany(id, companyId);
     await this.customerRepository.softRemove(customer);
+  }
+
+  async getAnalytics(id: string, companyId: string) {
+    await this.findByIdInCompany(id, companyId);
+
+    if (!this.saleRepository) {
+      return {
+        customerId: id,
+        totalPurchase: 0,
+        totalOrders: 0,
+        averageOrderValue: 0,
+        lastPurchaseDate: null,
+        favoriteCategories: [],
+        favoriteBrands: [],
+        rfmSegment: 'New',
+      };
+    }
+
+    const sales = await this.saleRepository
+      .createQueryBuilder('s')
+      .where('s.customerId = :customerId', { customerId: id })
+      .andWhere('s.companyId = :companyId', { companyId })
+      .andWhere('s.status = :status', { status: 'CONFIRMED' })
+      .andWhere('s.deletedAt IS NULL')
+      .orderBy('s.createdAt', 'DESC')
+      .getMany();
+
+    const totalOrders = sales.length;
+    let totalPurchase = 0;
+    for (const s of sales) {
+      totalPurchase += parseFloat(s.grandTotal || '0');
+    }
+    const averageOrderValue =
+      totalOrders > 0 ? Math.round(totalPurchase / totalOrders) : 0;
+    const lastPurchaseDate =
+      sales.length > 0 ? sales[0].createdAt.toISOString() : null;
+
+    let favoriteCategories: string[] = [];
+    let favoriteBrands: string[] = [];
+
+    if (totalOrders > 0) {
+      const topCats = await this.saleRepository.query(
+        `SELECT c.name as name, COUNT(*) as cnt
+         FROM sale_items si
+         JOIN sales s ON s.id = si.sale_id
+         JOIN product_variants pv ON pv.id = si.product_variant_id
+         JOIN products p ON p.id = pv.product_id
+         JOIN categories c ON c.id = p.category_id
+         WHERE s.customer_id = ? AND s.company_id = ? AND s.status = 'CONFIRMED' AND s.deleted_at IS NULL
+         GROUP BY c.id, c.name
+         ORDER BY cnt DESC
+         LIMIT 3`,
+        [id, companyId],
+      );
+      favoriteCategories = topCats.map((r: { name: string }) => r.name);
+
+      const topBrands = await this.saleRepository.query(
+        `SELECT b.name as name, COUNT(*) as cnt
+         FROM sale_items si
+         JOIN sales s ON s.id = si.sale_id
+         JOIN product_variants pv ON pv.id = si.product_variant_id
+         JOIN products p ON p.id = pv.product_id
+         JOIN brands b ON b.id = p.brand_id
+         WHERE s.customer_id = ? AND s.company_id = ? AND s.status = 'CONFIRMED' AND s.deleted_at IS NULL
+         GROUP BY b.id, b.name
+         ORDER BY cnt DESC
+         LIMIT 3`,
+        [id, companyId],
+      );
+      favoriteBrands = topBrands.map((r: { name: string }) => r.name);
+    }
+
+    let rfmSegment = 'New';
+    if (totalOrders > 0 && sales[0].createdAt) {
+      const daysSinceLast = Math.floor(
+        (Date.now() - sales[0].createdAt.getTime()) / (1000 * 3600 * 24),
+      );
+      if (daysSinceLast <= 30 && totalPurchase >= 200000) {
+        rfmSegment = 'VIP';
+      } else if (daysSinceLast <= 60 && totalOrders >= 3) {
+        rfmSegment = 'Loyal';
+      } else if (daysSinceLast <= 90) {
+        rfmSegment = 'Active';
+      } else if (daysSinceLast <= 180) {
+        rfmSegment = 'At-Risk';
+      } else {
+        rfmSegment = 'Lost';
+      }
+    }
+
+    return {
+      customerId: id,
+      totalPurchase,
+      totalOrders,
+      averageOrderValue,
+      lastPurchaseDate,
+      favoriteCategories,
+      favoriteBrands,
+      rfmSegment,
+    };
+  }
+
+  async getNotes(customerId: string, companyId: string) {
+    await this.findByIdInCompany(customerId, companyId);
+    if (!this.customerNoteRepository) return [];
+    return this.customerNoteRepository.find({
+      where: { customerId, companyId },
+      relations: ['user'],
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  async createNote(
+    customerId: string,
+    companyId: string,
+    userId: string,
+    dto: { content: string; noteType?: string },
+  ) {
+    await this.findByIdInCompany(customerId, companyId);
+    if (!dto.content || !dto.content.trim()) {
+      throw new AppException(ErrorCode.ValidationError, 'Content is required');
+    }
+    if (!this.customerNoteRepository) {
+      throw new AppException(ErrorCode.InternalError, 'Note repository not available');
+    }
+    const note = this.customerNoteRepository.create({
+      companyId,
+      customerId,
+      userId,
+      content: dto.content.trim(),
+      noteType: dto.noteType?.trim() || 'NOTE',
+    });
+    return this.customerNoteRepository.save(note);
   }
 }

@@ -73,6 +73,55 @@ export class CustomersController {
     return toCustomerResponseDto(entity);
   }
 
+  @Get(':id/analytics')
+  @RequirePermission('customers.read')
+  async getAnalytics(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('companyId') companyIdQuery?: string,
+  ) {
+    const companyId = await resolveRequestCompanyId(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+    );
+    return this.customersService.getAnalytics(id, companyId);
+  }
+
+  @Get(':id/notes')
+  @RequirePermission('customers.read')
+  async getNotes(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('companyId') companyIdQuery?: string,
+  ) {
+    const companyId = await resolveRequestCompanyId(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+    );
+    return this.customersService.getNotes(id, companyId);
+  }
+
+  @Post(':id/notes')
+  @RequirePermission('customers.update')
+  async createNote(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: { content: string; noteType?: string },
+    @Query('companyId') companyIdQuery?: string,
+  ) {
+    const companyId = await resolveRequestCompanyId(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+    );
+    return this.customersService.createNote(id, companyId, user.id, dto);
+  }
+
   @Post()
   @RequirePermission('customers.create')
   async create(

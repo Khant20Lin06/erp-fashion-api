@@ -8,7 +8,9 @@ import { PaymentTerm } from './entities/payment-term.entity';
 import { CustomerAddress } from './entities/customer-address.entity';
 import { SupplierAddress } from './entities/supplier-address.entity';
 import { CustomerContact } from './entities/customer-contact.entity';
+import { CustomerNote } from './entities/customer-note.entity';
 import { SupplierContact } from './entities/supplier-contact.entity';
+import { Sale } from '../sales/entities/sale.entity';
 import { PaymentTermsService } from './services/payment-terms.service';
 import { CustomerGroupsService } from './services/customer-groups.service';
 import { SupplierGroupsService } from './services/supplier-groups.service';
@@ -56,6 +58,8 @@ import { GoodsReceipt } from '../inventory/entities/goods-receipt.entity';
       SupplierAddress,
       CustomerContact,
       SupplierContact,
+      CustomerNote,
+      Sale,
       PurchaseOrder,
       Payment,
       GoodsReceipt,
