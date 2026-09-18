@@ -68,6 +68,9 @@ import { StockTransferItem } from '../modules/inventory/entities/stock-transfer-
 import { CompanyStockTransferCounter } from '../modules/inventory/entities/company-stock-transfer-counter.entity';
 import { StockAdjustment } from '../modules/inventory/entities/stock-adjustment.entity';
 import { CompanyStockAdjustmentCounter } from '../modules/inventory/entities/company-stock-adjustment-counter.entity';
+import { BranchTransfer } from '../modules/inventory/entities/branch-transfer.entity';
+import { BranchTransferItem } from '../modules/inventory/entities/branch-transfer-item.entity';
+import { EcommerceChannel } from '../modules/channels/entities/ecommerce-channel.entity';
 import { Payment } from '../modules/payments/entities/payment.entity';
 import { PaymentAllocation } from '../modules/payments/entities/payment-allocation.entity';
 import { PaymentMethod } from '../modules/payments/entities/payment-method.entity';
@@ -193,6 +196,9 @@ const entities = [
   CompanyStockTransferCounter,
   StockAdjustment,
   CompanyStockAdjustmentCounter,
+  BranchTransfer,
+  BranchTransferItem,
+  EcommerceChannel,
   Payment,
   PaymentAllocation,
   PaymentMethod,

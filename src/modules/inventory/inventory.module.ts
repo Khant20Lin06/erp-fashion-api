@@ -10,14 +10,18 @@ import { StockTransferItem } from './entities/stock-transfer-item.entity';
 import { CompanyStockTransferCounter } from './entities/company-stock-transfer-counter.entity';
 import { StockAdjustment } from './entities/stock-adjustment.entity';
 import { CompanyStockAdjustmentCounter } from './entities/company-stock-adjustment-counter.entity';
+import { BranchTransfer } from './entities/branch-transfer.entity';
+import { BranchTransferItem } from './entities/branch-transfer-item.entity';
 import { WarehouseStockService } from './services/warehouse-stock.service';
 import { GoodsReceiptsService } from './services/goods-receipts.service';
 import { StockTransfersService } from './services/stock-transfers.service';
+import { BranchTransfersService } from './services/branch-transfers.service';
 import { StockAdjustmentsService } from './services/stock-adjustments.service';
 import { InventoryLedgerService } from './services/inventory-ledger.service';
 import { WarehouseStockController } from './controllers/warehouse-stock.controller';
 import { GoodsReceiptsController } from './controllers/goods-receipts.controller';
 import { StockTransfersController } from './controllers/stock-transfers.controller';
+import { BranchTransfersController } from './controllers/branch-transfers.controller';
 import { StockAdjustmentsController } from './controllers/stock-adjustments.controller';
 import { InventoryLedgerController } from './controllers/inventory-ledger.controller';
 import { AuthModule } from '../auth/auth.module';
@@ -64,6 +68,8 @@ import { PurchaseReturn } from '../purchase/entities/purchase-return.entity';
       CompanyStockTransferCounter,
       StockAdjustment,
       CompanyStockAdjustmentCounter,
+      BranchTransfer,
+      BranchTransferItem,
       Warehouse,
       ProductVariant,
       ProductVariantAttribute,
@@ -81,6 +87,7 @@ import { PurchaseReturn } from '../purchase/entities/purchase-return.entity';
     WarehouseStockController,
     GoodsReceiptsController,
     StockTransfersController,
+    BranchTransfersController,
     StockAdjustmentsController,
     InventoryLedgerController,
   ],
@@ -88,6 +95,7 @@ import { PurchaseReturn } from '../purchase/entities/purchase-return.entity';
     WarehouseStockService,
     GoodsReceiptsService,
     StockTransfersService,
+    BranchTransfersService,
     StockAdjustmentsService,
     InventoryLedgerService,
   ],
@@ -95,6 +103,7 @@ import { PurchaseReturn } from '../purchase/entities/purchase-return.entity';
     WarehouseStockService,
     GoodsReceiptsService,
     StockTransfersService,
+    BranchTransfersService,
     StockAdjustmentsService,
     InventoryLedgerService,
   ],

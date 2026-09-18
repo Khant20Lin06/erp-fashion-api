@@ -37,6 +37,7 @@ import { CustomerPortalModule } from './modules/customer-portal/customer-portal.
 import { OnlineOrdersModule } from './modules/online-orders/online-orders.module';
 import { PurchaseModule } from './modules/purchase/purchase.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
+import { ChannelsModule } from './modules/channels/channels.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
 import { PromotionsModule } from './modules/promotions/promotions.module';
@@ -108,6 +109,7 @@ const databaseImport = isOpenApiGenerationMode()
     OnlineOrdersModule,
     PurchaseModule,
     InventoryModule,
+    ChannelsModule,
     PromotionsModule,
     LoyaltyModule,
     SalesReturnsModule,
