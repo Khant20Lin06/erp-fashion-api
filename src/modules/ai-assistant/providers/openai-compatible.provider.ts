@@ -100,7 +100,6 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         },
       }));
     }
-
     const response = await this.request<OpenAiChatCompletionResponse>(
       '/chat/completions',
       body,

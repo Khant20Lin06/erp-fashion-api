@@ -93,6 +93,58 @@ export class MetricsRegistryService {
       'BullMQ job processing duration in milliseconds.',
       IO_DURATION_BUCKETS_MS,
     );
+    this.createCounter(
+      'fashion_erp_ai_tool_executions_total',
+      'Total AI agent tool executions by tool, outcome, and type.',
+    );
+    this.createHistogram(
+      'fashion_erp_ai_tool_duration_ms',
+      'AI agent tool execution duration in milliseconds.',
+      IO_DURATION_BUCKETS_MS,
+    );
+    this.createCounter(
+      'fashion_erp_ai_guardrail_blocks_total',
+      'Total AI guardrail violations blocked by rule type.',
+    );
+    this.createCounter(
+      'fashion_erp_ai_approvals_total',
+      'Total AI human-in-the-loop approvals by tool and action.',
+    );
+  }
+
+  recordAiToolExecution(
+    toolName: string,
+    toolType: string,
+    status: string,
+    durationMs: number,
+  ): void {
+    const labels = {
+      tool_name: this.sanitizeLabel(toolName),
+      tool_type: this.sanitizeLabel(toolType),
+      status: this.sanitizeLabel(status),
+    };
+    this.incrementCounter('fashion_erp_ai_tool_executions_total', labels);
+    this.observeHistogram(
+      'fashion_erp_ai_tool_duration_ms',
+      { tool_name: labels.tool_name },
+      durationMs,
+    );
+  }
+
+  recordAiGuardrailBlock(ruleType: string): void {
+    this.incrementCounter('fashion_erp_ai_guardrail_blocks_total', {
+      rule_type: this.sanitizeLabel(ruleType),
+    });
+  }
+
+  recordAiApproval(
+    toolName: string,
+    action: 'requested' | 'approved' | 'rejected',
+  ): void {
+    this.incrementCounter('fashion_erp_ai_approvals_total', {
+      tool_name: this.sanitizeLabel(toolName),
+      action,
+    });
   }
 
   incrementActiveHttpRequests(): void {

@@ -74,7 +74,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       this.logger.warn(this.buildLogMessage('Client exception', request, body));
     }
 
-    response.status(statusCode).json(body);
+    response.type('application/json').status(statusCode).json(body);
   }
 
   private shouldWarnOnClientError(statusCode: number): boolean {
@@ -102,6 +102,10 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   }
 
   private resolveMessage(exception: unknown, statusCode: number): string {
+    // Even an HttpException can contain an upstream HTML page or internal data.
+    if (statusCode >= 500) {
+      return 'Internal server error';
+    }
     if (exception instanceof HttpException) {
       const response = exception.getResponse();
       if (typeof response === 'string') {

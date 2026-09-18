@@ -11,6 +11,7 @@ import {
 } from 'class-validator';
 import { ProductType } from '../entities/product-type.enum';
 import { CreateProductVariantDto } from './create-product-variant.dto';
+import { IsPublicImageUrl } from '../utils/public-image-url';
 
 export class CreateProductDto {
   @IsOptional()
@@ -34,6 +35,10 @@ export class CreateProductDto {
   @IsString()
   @MaxLength(1000)
   description?: string;
+
+  @IsOptional()
+  @IsPublicImageUrl()
+  imageUrl?: string | null;
 
   @IsUUID()
   categoryId!: string;

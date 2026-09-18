@@ -22,6 +22,9 @@ export class ProductResponseDto {
   })
   description!: string | null;
 
+  @ApiPropertyOptional({ nullable: true, format: 'uri' })
+  imageUrl!: string | null;
+
   @ApiProperty({ format: 'uuid' })
   categoryId!: string;
 
@@ -63,6 +66,7 @@ export function toProductResponseDto(product: Product): ProductResponseDto {
     code: product.code,
     name: product.name,
     description: product.description,
+    imageUrl: product.imageUrl ?? null,
     categoryId: product.categoryId,
     brandId: product.brandId,
     collectionId: product.collectionId,

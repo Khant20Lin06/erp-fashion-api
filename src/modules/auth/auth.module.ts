@@ -9,6 +9,8 @@ import { PasswordService } from './services/password.service';
 import { TokenService } from './services/token.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AuthRateLimitGuard } from './guards/auth-rate-limit.guard';
+import { BotSessionService } from './services/bot-session.service';
+import { BotSessionController } from './controllers/bot-session.controller';
 
 @Module({
   imports: [
@@ -16,13 +18,14 @@ import { AuthRateLimitGuard } from './guards/auth-rate-limit.guard';
     JwtModule.register({}),
     TypeOrmModule.forFeature([RefreshSession]),
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, BotSessionController],
   providers: [
     AuthService,
     PasswordService,
     TokenService,
     JwtAuthGuard,
     AuthRateLimitGuard,
+    BotSessionService,
   ],
   exports: [JwtAuthGuard, TokenService, PasswordService],
 })

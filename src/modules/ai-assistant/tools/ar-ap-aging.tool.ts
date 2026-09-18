@@ -31,6 +31,7 @@ export class ArApAgingTool implements AiTool {
     },
   };
   readonly requiredPermission = 'reports.ar_ap.read';
+  readonly dataScopeResource = 'reports';
 
   constructor(private readonly arApAgingService: ArApAgingService) {}
 

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   HttpCode,
   HttpStatus,
   Post,
@@ -47,6 +48,8 @@ export class AuthController {
   ) {}
 
   @Post('login')
+  @Header('Content-Type', 'application/json; charset=utf-8')
+  @Header('Cache-Control', 'no-store')
   @HttpCode(HttpStatus.OK)
   @UseGuards(AuthRateLimitGuard)
   @AuthRateLimit('login')

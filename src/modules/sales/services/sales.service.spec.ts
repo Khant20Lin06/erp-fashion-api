@@ -3,6 +3,7 @@ import { SalesService } from './sales.service';
 import { Sale } from '../entities/sale.entity';
 import { SaleItem } from '../entities/sale-item.entity';
 import { SaleStatus } from '../entities/sale-status.enum';
+import { SaleFulfillmentStatus } from '../entities/sale-fulfillment-status.enum';
 import { CompanySaleCounter } from '../entities/company-sale-counter.entity';
 import { WarehouseStock } from '../../inventory/entities/warehouse-stock.entity';
 import { TransactionService } from '../../../core/transaction/transaction.service';
@@ -202,6 +203,37 @@ describe('SalesService', () => {
       items: [{ productVariantId: 'variant-1', quantity: 2 }],
     };
 
+    it('returns the original sale on an idempotent replay before looking up changed catalog data', async () => {
+      const original = {
+        id: 'existing',
+        companyId: 'company-a',
+        creationKey: 'key',
+        creationHash: 'hash',
+        items: [],
+      } as unknown as Sale;
+      saleRepository.findOne.mockResolvedValue(original);
+      const result = await service.create('company-a', 'user-1', baseDto, {
+        key: 'key',
+        hash: 'hash',
+      });
+      expect(result.id).toBe('existing');
+      expect(transactionService.run).not.toHaveBeenCalled();
+      expect(productVariantsService.findByIdInCompany).not.toHaveBeenCalled();
+    });
+
+    it('rejects reuse of an idempotency key with a changed request', async () => {
+      saleRepository.findOne.mockResolvedValue({
+        creationHash: 'old',
+      } as unknown as Sale);
+      await expect(
+        service.create('company-a', 'user-1', baseDto, {
+          key: 'key',
+          hash: 'new',
+        }),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.Conflict });
+      expect(transactionService.run).not.toHaveBeenCalled();
+    });
+
     beforeEach(() => {
       companiesService.findActiveByIdOrNull.mockResolvedValue(buildCompany());
       customersService.findByIdInCompany.mockResolvedValue(buildCustomer());
@@ -236,10 +268,7 @@ describe('SalesService', () => {
         }
         return Promise.resolve([]);
       });
-      manager.findOne.mockImplementation((entity: unknown) => {
-        const name = (entity as { name?: string }).name;
-        return Promise.resolve(null);
-      });
+      manager.findOne.mockResolvedValue(null);
       managerQueryBuilder.getOneOrFail.mockResolvedValue(buildCounter());
     });
 
@@ -469,8 +498,10 @@ describe('SalesService', () => {
 
       await service.create('company-a', 'user-1', {
         ...baseDto,
-        items: [{ productVariantId: 'variant-1', uomId: 'uom-box', quantity: 2 }],
-      } as never);
+        items: [
+          { productVariantId: 'variant-1', uomId: 'uom-box', quantity: 2 },
+        ],
+      });
 
       expect(priceListItemsService.resolveActivePrice).toHaveBeenCalledWith(
         'company-a',
@@ -651,6 +682,118 @@ describe('SalesService', () => {
 
       await expect(
         service.cancel('sale-1', 'company-a', 'user-1'),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.Conflict });
+    });
+
+    it('confirm() sets fulfillmentStatus to PENDING_SHIPMENT alongside CONFIRMED', async () => {
+      saleRepository.findOne.mockResolvedValue(buildSale());
+      managerQueryBuilder.getOneOrFail.mockResolvedValue(buildStock());
+      manager.save.mockImplementation((_entity: unknown, data: unknown) =>
+        Promise.resolve(data),
+      );
+
+      const result = await service.confirm('sale-1', 'company-a', 'user-1');
+
+      expect(result.fulfillmentStatus).toBe(
+        SaleFulfillmentStatus.PendingShipment,
+      );
+    });
+  });
+
+  describe('ship / deliver — fulfillment tracking', () => {
+    const buildConfirmedSale = (overrides: Record<string, unknown> = {}) =>
+      ({
+        id: 'sale-1',
+        companyId: 'company-a',
+        status: SaleStatus.Confirmed,
+        fulfillmentStatus: SaleFulfillmentStatus.PendingShipment,
+        ...overrides,
+      }) as Sale;
+
+    it('allows PENDING_SHIPMENT -> SHIPPED and stamps shippedAt', async () => {
+      saleRepository.findOne.mockResolvedValue(buildConfirmedSale());
+      saleRepository.save.mockImplementation((input) =>
+        Promise.resolve(input as Sale),
+      );
+
+      const result = await service.ship('sale-1', 'company-a', 'user-1');
+
+      expect(result.fulfillmentStatus).toBe(SaleFulfillmentStatus.Shipped);
+      expect(result.shippedAt).toBeInstanceOf(Date);
+    });
+
+    it('rejects ship() on a DRAFT sale (fulfillmentStatus is null before confirmation)', async () => {
+      saleRepository.findOne.mockResolvedValue(
+        buildConfirmedSale({
+          status: SaleStatus.Draft,
+          fulfillmentStatus: null,
+        }),
+      );
+
+      await expect(
+        service.ship('sale-1', 'company-a', 'user-1'),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.Conflict });
+      expect(saleRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects ship() when already SHIPPED (no double-ship)', async () => {
+      saleRepository.findOne.mockResolvedValue(
+        buildConfirmedSale({
+          fulfillmentStatus: SaleFulfillmentStatus.Shipped,
+        }),
+      );
+
+      await expect(
+        service.ship('sale-1', 'company-a', 'user-1'),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.Conflict });
+    });
+
+    it('rejects ship() when already DELIVERED', async () => {
+      saleRepository.findOne.mockResolvedValue(
+        buildConfirmedSale({
+          fulfillmentStatus: SaleFulfillmentStatus.Delivered,
+        }),
+      );
+
+      await expect(
+        service.ship('sale-1', 'company-a', 'user-1'),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.Conflict });
+    });
+
+    it('allows SHIPPED -> DELIVERED and stamps deliveredAt', async () => {
+      saleRepository.findOne.mockResolvedValue(
+        buildConfirmedSale({
+          fulfillmentStatus: SaleFulfillmentStatus.Shipped,
+        }),
+      );
+      saleRepository.save.mockImplementation((input) =>
+        Promise.resolve(input as Sale),
+      );
+
+      const result = await service.deliver('sale-1', 'company-a', 'user-1');
+
+      expect(result.fulfillmentStatus).toBe(SaleFulfillmentStatus.Delivered);
+      expect(result.deliveredAt).toBeInstanceOf(Date);
+    });
+
+    it('rejects deliver() before shipping (PENDING_SHIPMENT -> DELIVERED is not a valid transition)', async () => {
+      saleRepository.findOne.mockResolvedValue(buildConfirmedSale());
+
+      await expect(
+        service.deliver('sale-1', 'company-a', 'user-1'),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.Conflict });
+      expect(saleRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects deliver() when already DELIVERED (no double-deliver)', async () => {
+      saleRepository.findOne.mockResolvedValue(
+        buildConfirmedSale({
+          fulfillmentStatus: SaleFulfillmentStatus.Delivered,
+        }),
+      );
+
+      await expect(
+        service.deliver('sale-1', 'company-a', 'user-1'),
       ).rejects.toMatchObject({ errorCode: ErrorCode.Conflict });
     });
   });
@@ -837,7 +980,7 @@ describe('SalesService', () => {
       const result = await service.previewItemPricing('company-a', {
         ...basePreviewDto,
         uomId: 'uom-box',
-      } as never);
+      });
 
       expect(priceListItemsService.resolveActivePrice).toHaveBeenCalledWith(
         'company-a',
@@ -885,7 +1028,7 @@ describe('SalesService', () => {
       const result = await service.previewItemPricing('company-a', {
         ...basePreviewDto,
         priceListId: 'pl-2',
-      } as never);
+      });
 
       expect(result.priceListId).toBe('pl-2');
       expect(priceListItemsService.resolveActivePrice).toHaveBeenCalledWith(

@@ -28,6 +28,7 @@ export class TopProductsTool implements AiTool {
     },
   };
   readonly requiredPermission = 'reports.sales.read';
+  readonly dataScopeResource = 'reports';
 
   constructor(private readonly salesReportsService: SalesReportsService) {}
 

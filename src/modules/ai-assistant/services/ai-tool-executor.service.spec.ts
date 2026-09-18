@@ -28,6 +28,7 @@ describe('AiToolExecutorService', () => {
       description: 'test tool',
       parameters: {},
       requiredPermission: 'reports.sales.read',
+      dataScopeResource: 'reports',
       execute: jest.fn().mockResolvedValue({ saleCount: 5 }),
     };
 
@@ -170,4 +171,119 @@ describe('AiToolExecutorService', () => {
       expect(result.result).toBeUndefined();
     });
   });
+
+  describe('execute — Harness Governance Pipeline', () => {
+    it('blocks tool execution when arguments contain injection patterns', async () => {
+      authorizationService.can.mockResolvedValue(true);
+      const result = await service.execute(
+        user,
+        'get_sales_summary',
+        { query: 'test; DROP TABLE users;' },
+        'company-a',
+        undefined,
+      );
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('disallowed');
+      expect(fakeTool.execute).not.toHaveBeenCalled();
+    });
+
+    it('requires human approval for write tools without an approval token', async () => {
+      authorizationService.can.mockResolvedValue(true);
+      const writeTool: AiTool = {
+        name: 'create_stock_adjustment',
+        description: 'write tool',
+        parameters: {},
+        requiredPermission: 'inventory.write',
+        dataScopeResource: 'inventory',
+        toolType: 'write',
+        requiresApproval: true,
+        execute: jest.fn().mockResolvedValue({ adjusted: true }),
+      };
+
+      const harnessService = new AiToolExecutorService(
+        [writeTool],
+        authorizationService as unknown as AuthorizationService,
+        dataScopeService as DataScopeService,
+      );
+
+      const result = await harnessService.execute(
+        user,
+        'create_stock_adjustment',
+        { sku: 'TEE-BLK-M', diff: -5 },
+        'company-a',
+        undefined,
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.approvalRequired).toBe(true);
+      expect(result.approvalToken).toBeDefined();
+      expect(result.actionSummary).toContain('create_stock_adjustment');
+      expect(writeTool.execute).not.toHaveBeenCalled();
+
+      // Now pass the valid approval token
+      const approvedResult = await harnessService.execute(
+        user,
+        'create_stock_adjustment',
+        { sku: 'TEE-BLK-M', diff: -5 },
+        'company-a',
+        undefined,
+        { approvalToken: result.approvalToken },
+      );
+
+      expect(approvedResult.success).toBe(true);
+      expect(approvedResult.result).toEqual({ adjusted: true });
+      expect(writeTool.execute).toHaveBeenCalled();
+    });
+
+    it('persists audit log and records metrics during tool execution', async () => {
+      authorizationService.can.mockResolvedValue(true);
+      const auditLogRepo = {
+        create: jest.fn().mockImplementation((dto) => ({ id: 'log-1', ...dto })),
+        save: jest.fn().mockResolvedValue({ id: 'log-1' }),
+      };
+      const metrics = {
+        recordAiToolExecution: jest.fn(),
+        recordAiGuardrailBlock: jest.fn(),
+        recordAiApproval: jest.fn(),
+      };
+
+      const harnessService = new AiToolExecutorService(
+        [fakeTool],
+        authorizationService as unknown as AuthorizationService,
+        dataScopeService as DataScopeService,
+        undefined,
+        undefined,
+        auditLogRepo as any,
+        metrics as any,
+      );
+
+      const result = await harnessService.execute(
+        user,
+        'get_sales_summary',
+        { from: '2026-09-01' },
+        'company-a',
+        undefined,
+        { conversationId: 'conv-123' },
+      );
+
+      expect(result.success).toBe(true);
+      expect(auditLogRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-1',
+          companyId: 'company-a',
+          toolName: 'get_sales_summary',
+          status: 'SUCCESS',
+          conversationId: 'conv-123',
+        }),
+      );
+      expect(auditLogRepo.save).toHaveBeenCalled();
+      expect(metrics.recordAiToolExecution).toHaveBeenCalledWith(
+        'get_sales_summary',
+        'read',
+        'success',
+        expect.any(Number),
+      );
+    });
+  });
 });
+

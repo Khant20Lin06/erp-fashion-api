@@ -8,6 +8,9 @@ import { AiConversation } from './entities/ai-conversation.entity';
 import { AiMessage } from './entities/ai-message.entity';
 import { AiKnowledgeDocument } from './entities/ai-knowledge-document.entity';
 import { AiKnowledgeChunk } from './entities/ai-knowledge-chunk.entity';
+import { AiToolAuditLog } from './entities/ai-tool-audit-log.entity';
+import { ProductVariant } from '../products/entities/product-variant.entity';
+import { ProductVariantAttribute } from '../products/entities/product-variant-attribute.entity';
 import { OpenAiCompatibleProvider } from './providers/openai-compatible.provider';
 import { OllamaCompatibleProvider } from './providers/ollama-compatible.provider';
 import { LocalFallbackProvider } from './providers/local-fallback.provider';
@@ -17,6 +20,8 @@ import { AiChatService } from './services/ai-chat.service';
 import { AiConversationService } from './services/ai-conversation.service';
 import { AiRagService } from './services/ai-rag.service';
 import { AiToolExecutorService } from './services/ai-tool-executor.service';
+import { AiGuardrailsService } from './services/ai-guardrails.service';
+import { AiApprovalService } from './services/ai-approval.service';
 import { AiKnowledgeService } from './services/ai-knowledge.service';
 import { QdrantVectorStoreService } from './services/qdrant-vector-store.service';
 import { AiChatController } from './controllers/ai-chat.controller';
@@ -31,6 +36,14 @@ import { SlowMovingStockTool } from './tools/slow-moving-stock.tool';
 import { ArApAgingTool } from './tools/ar-ap-aging.tool';
 import { ProfitLossTool } from './tools/profit-loss.tool';
 import { BalanceSheetTool } from './tools/balance-sheet.tool';
+import { ProductLookupTool } from './tools/product-lookup.tool';
+import { InventoryDomainAgent } from './agents/inventory.domain-agent';
+import { SalesPosDomainAgent } from './agents/sales-pos.domain-agent';
+import { FinanceDomainAgent } from './agents/finance.domain-agent';
+import { CustomerServiceDomainAgent } from './agents/customer-service.domain-agent';
+import { AiDomainAgentRegistryService } from './services/ai-domain-agent-registry.service';
+import { SupervisorIntentClassifierService } from './supervisor/supervisor-intent-classifier.service';
+import { AiSupervisorService } from './services/ai-supervisor.service';
 
 const AI_TOOL_PROVIDERS = [
   SalesSummaryTool,
@@ -40,6 +53,7 @@ const AI_TOOL_PROVIDERS = [
   ArApAgingTool,
   ProfitLossTool,
   BalanceSheetTool,
+  ProductLookupTool,
 ];
 
 /**
@@ -66,6 +80,9 @@ const AI_TOOL_PROVIDERS = [
       AiMessage,
       AiKnowledgeDocument,
       AiKnowledgeChunk,
+      AiToolAuditLog,
+      ProductVariant,
+      ProductVariantAttribute,
     ]),
     AuthModule,
     RbacModule,
@@ -84,10 +101,19 @@ const AI_TOOL_PROVIDERS = [
     AiChatService,
     AiConversationService,
     AiRagService,
+    AiGuardrailsService,
+    AiApprovalService,
     AiToolExecutorService,
     AiKnowledgeService,
     QdrantVectorStoreService,
     KnowledgeIngestionWorker,
+    InventoryDomainAgent,
+    SalesPosDomainAgent,
+    FinanceDomainAgent,
+    CustomerServiceDomainAgent,
+    AiDomainAgentRegistryService,
+    SupervisorIntentClassifierService,
+    AiSupervisorService,
     ...AI_TOOL_PROVIDERS,
     {
       provide: AI_TOOLS,
@@ -100,6 +126,18 @@ const AI_TOOL_PROVIDERS = [
     AiConversationsController,
     AiKnowledgeController,
   ],
-  exports: [AiChatService],
+  exports: [
+    AiChatService,
+    AiToolExecutorService,
+    AiGuardrailsService,
+    AiApprovalService,
+    AiDomainAgentRegistryService,
+    InventoryDomainAgent,
+    SalesPosDomainAgent,
+    FinanceDomainAgent,
+    CustomerServiceDomainAgent,
+    SupervisorIntentClassifierService,
+    AiSupervisorService,
+  ],
 })
 export class AiAssistantModule {}

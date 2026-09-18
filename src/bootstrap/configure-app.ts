@@ -11,9 +11,12 @@ import {
   Request,
   Response,
   urlencoded,
+  static as expressStatic,
 } from 'express';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
+import * as path from 'path';
+import * as fs from 'fs';
 import { GlobalExceptionFilter } from '../common/filters/http-exception.filter';
 import { AppConfig } from '../config/app.config';
 import { buildOpenApiDocument } from '../common/swagger/openapi';
@@ -63,6 +66,13 @@ export function configureApplication(
     origin: appConfig.corsOrigins.length > 0 ? appConfig.corsOrigins : false,
     credentials: true,
   });
+
+  // Serve static uploads
+  const uploadPath = path.resolve(process.cwd(), 'uploads');
+  if (!fs.existsSync(uploadPath)) {
+    fs.mkdirSync(uploadPath, { recursive: true });
+  }
+  app.use('/uploads', expressStatic(uploadPath));
 
   if (getAppRole() === AppRole.Worker) {
     restrictHttpSurfaceToWorkerRole(app, appConfig);

@@ -5,6 +5,7 @@ import { Sale } from '../entities/sale.entity';
 import { SaleItem } from '../entities/sale-item.entity';
 import { SaleStatus } from '../entities/sale-status.enum';
 import { SaleType } from '../entities/sale-type.enum';
+import { SaleFulfillmentStatus } from '../entities/sale-fulfillment-status.enum';
 import { CompanySaleCounter } from '../entities/company-sale-counter.entity';
 import { WarehouseStock } from '../../inventory/entities/warehouse-stock.entity';
 import { StockMovement } from '../../inventory/entities/stock-movement.entity';
@@ -69,7 +70,10 @@ export interface SalesPriceListOption {
   currency: string;
 }
 
-interface ResolvedSaleItemPricing extends Omit<SaleItemPricingPreview, 'transactionDate'> {
+interface ResolvedSaleItemPricing extends Omit<
+  SaleItemPricingPreview,
+  'transactionDate'
+> {
   variant: ProductVariant;
 }
 
@@ -189,7 +193,9 @@ export class SalesService {
     return sale;
   }
 
-  async listActivePriceLists(companyId: string): Promise<SalesPriceListOption[]> {
+  async listActivePriceLists(
+    companyId: string,
+  ): Promise<SalesPriceListOption[]> {
     const company = await this.companiesService.findActiveByIdOrNull(companyId);
     if (!company) {
       throw new AppException(
@@ -577,7 +583,12 @@ export class SalesService {
     companyId: string,
     userId: string,
     dto: CreateSaleDto,
+    creation?: { key: string; hash: string },
   ): Promise<Sale> {
+    if (creation) {
+      const replay = await this.findByCreationKey(companyId, creation);
+      if (replay) return replay;
+    }
     const company = await this.companiesService.findActiveByIdOrNull(companyId);
     if (!company) {
       throw new AppException(
@@ -621,157 +632,209 @@ export class SalesService {
       : new Date();
     const year = transactionDate.getUTCFullYear();
 
-    return this.transactionService.run(async (manager) => {
-      if (dto.salesAccountId) {
-        await this.assertValidSalesAccount(
-          dto.salesAccountId,
-          companyId,
-          userId,
-          manager,
-        );
-      }
-
-      const saleNumber = await this.generateSaleNumber(
-        companyId,
-        year,
-        manager,
-      );
-
-      const defaultPriceListId = await this.resolveDefaultPriceListId(
-        companyId,
-        manager,
-      );
-
-      let subtotal = 0;
-      let discountTotal = 0;
-      let taxTotal = 0;
-      const itemRows: Array<{
-        productVariantId: string;
-        uomId: string | null;
-        uomCodeSnapshot: string | null;
-        uomNameSnapshot: string | null;
-        quantity: number;
-        baseQuantitySnapshot: number;
-        conversionFactorToBaseSnapshot: string;
-        unitPriceSnapshot: string;
-        discountSnapshot: string;
-        taxSnapshot: string;
-        lineTotal: string;
-        productNameSnapshot: string;
-        skuSnapshot: string;
-      }> = [];
-
-      for (const itemDto of dto.items) {
-        const resolvedItem = await this.resolveItemPricing(
-          itemDto,
-          companyId,
-          defaultPriceListId,
-          transactionDate,
-          manager,
-        );
-
-        const discount = Number(itemDto.discountAmount ?? '0');
-        const tax = Number(itemDto.taxAmount ?? '0');
-        if (discount < 0 || tax < 0) {
-          throw new AppException(
-            ErrorCode.ValidationError,
-            'discountAmount and taxAmount must be non-negative',
+    return this.transactionService
+      .run(async (manager) => {
+        if (dto.salesAccountId) {
+          await this.assertValidSalesAccount(
+            dto.salesAccountId,
+            companyId,
+            userId,
+            manager,
           );
         }
 
-        const lineSubtotal = Number(resolvedItem.unitPrice) * itemDto.quantity;
-        if (discount > lineSubtotal) {
-          throw new AppException(
-            ErrorCode.ValidationError,
-            `discountAmount cannot exceed the line subtotal for product variant ${itemDto.productVariantId}`,
-          );
-        }
-        const lineTotal = lineSubtotal - discount + tax;
-
-        subtotal += lineSubtotal;
-        discountTotal += discount;
-        taxTotal += tax;
-
-        itemRows.push({
-          productVariantId: itemDto.productVariantId,
-          uomId: resolvedItem.uomId,
-          uomCodeSnapshot: resolvedItem.uomCode,
-          uomNameSnapshot: resolvedItem.uomName,
-          quantity: itemDto.quantity,
-          baseQuantitySnapshot: resolvedItem.baseQuantity,
-          conversionFactorToBaseSnapshot: resolvedItem.conversionFactorToBase,
-          unitPriceSnapshot: resolvedItem.unitPrice,
-          discountSnapshot: discount.toFixed(2),
-          taxSnapshot: tax.toFixed(2),
-          lineTotal: lineTotal.toFixed(2),
-          productNameSnapshot: resolvedItem.variant.product.name,
-          skuSnapshot: resolvedItem.variant.sku,
-        });
-      }
-
-      // Order-level Promotion (Returns/Discounts/Loyalty phase, additive):
-      // resolved and locked inside this same transaction, backend-computed
-      // discount amount only — never a client-supplied total. Applied on
-      // top of the sum of per-item discounts already computed above.
-      let promotionId: string | null = null;
-      if (dto.promotionCode) {
-        const promotion = await this.promotionsService.resolveAndLockForUse(
-          manager,
+        const saleNumber = await this.generateSaleNumber(
           companyId,
-          dto.promotionCode,
-          subtotal,
+          year,
+          manager,
+        );
+
+        // The company/year counter lock serializes normal concurrent creates.
+        // Use a current locking read, not the transaction's earlier snapshot.
+        if (creation) {
+          const replay = await manager.findOne(Sale, {
+            where: { companyId, creationKey: creation.key },
+            withDeleted: true,
+            lock: { mode: 'pessimistic_write' },
+          });
+          if (replay) {
+            this.assertCreationHash(replay, creation.hash);
+            replay.items = await manager.find(SaleItem, {
+              where: { saleId: replay.id },
+            });
+            return replay;
+          }
+        }
+
+        const defaultPriceListId = await this.resolveDefaultPriceListId(
+          companyId,
+          manager,
+        );
+
+        let subtotal = 0;
+        let discountTotal = 0;
+        let taxTotal = 0;
+        const itemRows: Array<{
+          productVariantId: string;
+          uomId: string | null;
+          uomCodeSnapshot: string | null;
+          uomNameSnapshot: string | null;
+          quantity: number;
+          baseQuantitySnapshot: number;
+          conversionFactorToBaseSnapshot: string;
+          unitPriceSnapshot: string;
+          discountSnapshot: string;
+          taxSnapshot: string;
+          lineTotal: string;
+          productNameSnapshot: string;
+          skuSnapshot: string;
+        }> = [];
+
+        for (const itemDto of dto.items) {
+          const resolvedItem = await this.resolveItemPricing(
+            itemDto,
+            companyId,
+            defaultPriceListId,
+            transactionDate,
+            manager,
+          );
+
+          const discount = Number(itemDto.discountAmount ?? '0');
+          const tax = Number(itemDto.taxAmount ?? '0');
+          if (discount < 0 || tax < 0) {
+            throw new AppException(
+              ErrorCode.ValidationError,
+              'discountAmount and taxAmount must be non-negative',
+            );
+          }
+
+          const lineSubtotal =
+            Number(resolvedItem.unitPrice) * itemDto.quantity;
+          if (discount > lineSubtotal) {
+            throw new AppException(
+              ErrorCode.ValidationError,
+              `discountAmount cannot exceed the line subtotal for product variant ${itemDto.productVariantId}`,
+            );
+          }
+          const lineTotal = lineSubtotal - discount + tax;
+
+          subtotal += lineSubtotal;
+          discountTotal += discount;
+          taxTotal += tax;
+
+          itemRows.push({
+            productVariantId: itemDto.productVariantId,
+            uomId: resolvedItem.uomId,
+            uomCodeSnapshot: resolvedItem.uomCode,
+            uomNameSnapshot: resolvedItem.uomName,
+            quantity: itemDto.quantity,
+            baseQuantitySnapshot: resolvedItem.baseQuantity,
+            conversionFactorToBaseSnapshot: resolvedItem.conversionFactorToBase,
+            unitPriceSnapshot: resolvedItem.unitPrice,
+            discountSnapshot: discount.toFixed(2),
+            taxSnapshot: tax.toFixed(2),
+            lineTotal: lineTotal.toFixed(2),
+            productNameSnapshot: resolvedItem.variant.product.name,
+            skuSnapshot: resolvedItem.variant.sku,
+          });
+        }
+
+        // Order-level Promotion (Returns/Discounts/Loyalty phase, additive):
+        // resolved and locked inside this same transaction, backend-computed
+        // discount amount only — never a client-supplied total. Applied on
+        // top of the sum of per-item discounts already computed above.
+        let promotionId: string | null = null;
+        if (dto.promotionCode) {
+          const promotion = await this.promotionsService.resolveAndLockForUse(
+            manager,
+            companyId,
+            dto.promotionCode,
+            subtotal,
+            transactionDate,
+          );
+          const promotionDiscount =
+            this.promotionsService.computeDiscountAmount(
+              promotion,
+              subtotal - discountTotal,
+            );
+          discountTotal += promotionDiscount;
+          promotionId = promotion.id;
+        }
+
+        const grandTotal = subtotal - discountTotal + taxTotal;
+
+        const sale = manager.create(Sale, {
+          creationKey: creation?.key ?? null,
+          creationHash: creation?.hash ?? null,
+          saleNumber,
+          saleType: dto.saleType ?? SaleType.Retail,
+          customerId: dto.customerId,
+          salesAccountId: dto.salesAccountId ?? null,
+          companyId,
+          branchId: dto.branchId ?? null,
+          warehouseId: dto.warehouseId ?? null,
           transactionDate,
-        );
-        const promotionDiscount = this.promotionsService.computeDiscountAmount(
-          promotion,
-          subtotal - discountTotal,
-        );
-        discountTotal += promotionDiscount;
-        promotionId = promotion.id;
-      }
-
-      const grandTotal = subtotal - discountTotal + taxTotal;
-
-      const sale = manager.create(Sale, {
-        saleNumber,
-        saleType: dto.saleType ?? SaleType.Retail,
-        customerId: dto.customerId,
-        salesAccountId: dto.salesAccountId ?? null,
-        companyId,
-        branchId: dto.branchId ?? null,
-        warehouseId: dto.warehouseId ?? null,
-        transactionDate,
-        status: SaleStatus.Draft,
-        subtotal: subtotal.toFixed(2),
-        discountAmount: discountTotal.toFixed(2),
-        taxAmount: taxTotal.toFixed(2),
-        grandTotal: grandTotal.toFixed(2),
-        paidAmount: '0.00',
-        balanceAmount: grandTotal.toFixed(2),
-        currency: dto.currency,
-        notes: dto.notes ?? null,
-        createdBy: userId,
-        updatedBy: userId,
-      });
-      const savedSale = await manager.save(Sale, sale);
-
-      if (promotionId) {
-        await this.promotionsService.incrementUsage(manager, promotionId);
-      }
-
-      for (const row of itemRows) {
-        const saleItem = manager.create(SaleItem, {
-          saleId: savedSale.id,
-          ...row,
+          status: SaleStatus.Draft,
+          subtotal: subtotal.toFixed(2),
+          discountAmount: discountTotal.toFixed(2),
+          taxAmount: taxTotal.toFixed(2),
+          grandTotal: grandTotal.toFixed(2),
+          paidAmount: '0.00',
+          balanceAmount: grandTotal.toFixed(2),
+          currency: dto.currency,
+          notes: dto.notes ?? null,
+          createdBy: userId,
+          updatedBy: userId,
         });
-        await manager.save(SaleItem, saleItem);
-      }
+        const savedSale = await manager.save(Sale, sale);
 
-      savedSale.items = await manager.find(SaleItem, {
-        where: { saleId: savedSale.id },
+        if (promotionId) {
+          await this.promotionsService.incrementUsage(manager, promotionId);
+        }
+
+        for (const row of itemRows) {
+          const saleItem = manager.create(SaleItem, {
+            saleId: savedSale.id,
+            ...row,
+          });
+          await manager.save(SaleItem, saleItem);
+        }
+
+        savedSale.items = await manager.find(SaleItem, {
+          where: { saleId: savedSale.id },
+        });
+        return savedSale;
+      })
+      .catch(async (error: unknown) => {
+        // Also covers racing requests across a year boundary (different counters).
+        if (creation && (error as { code?: string }).code === 'ER_DUP_ENTRY') {
+          const replay = await this.findByCreationKey(companyId, creation);
+          if (replay) return replay;
+        }
+        throw error;
       });
-      return savedSale;
+  }
+
+  async findByCreationKey(
+    companyId: string,
+    creation: { key: string; hash: string },
+  ): Promise<Sale | null> {
+    const sale = await this.saleRepository.findOne({
+      where: { companyId, creationKey: creation.key },
+      withDeleted: true,
+      relations: { items: true },
     });
+    if (sale) this.assertCreationHash(sale, creation.hash);
+    return sale;
+  }
+
+  private assertCreationHash(sale: Sale, hash: string): void {
+    if (sale.creationHash !== hash || sale.deletedAt) {
+      throw new AppException(
+        ErrorCode.Conflict,
+        'Checkout key was already used or its sale is unavailable',
+      );
+    }
   }
 
   private assertTransitionAllowed(
@@ -888,6 +951,7 @@ export class SalesService {
       }
 
       sale.status = SaleStatus.Confirmed;
+      sale.fulfillmentStatus = SaleFulfillmentStatus.PendingShipment;
       sale.updatedBy = userId;
       const confirmedSale = await manager.save(Sale, sale);
 
@@ -918,6 +982,43 @@ export class SalesService {
     const sale = await this.findByIdInCompany(id, companyId);
     this.assertTransitionAllowed(sale.status, SaleStatus.Cancelled);
     sale.status = SaleStatus.Cancelled;
+    sale.updatedBy = userId;
+    return this.saleRepository.save(sale);
+  }
+
+  /**
+   * Post-confirmation fulfillment tracking (Customer Order Bot addition).
+   * Only a CONFIRMED sale can enter fulfillment tracking — DRAFT (nothing
+   * to ship yet) and CANCELLED (order was voided) are both rejected.
+   * fulfillmentStatus itself only moves forward
+   * (null -> PENDING_SHIPMENT -> SHIPPED -> DELIVERED); this does not
+   * reuse assertTransitionAllowed/ALLOWED_TRANSITIONS since those govern
+   * SaleStatus, a distinct state machine from fulfillmentStatus.
+   */
+  async ship(id: string, companyId: string, userId: string): Promise<Sale> {
+    const sale = await this.findByIdInCompany(id, companyId);
+    if (sale.fulfillmentStatus !== SaleFulfillmentStatus.PendingShipment) {
+      throw new AppException(
+        ErrorCode.Conflict,
+        `Cannot mark this sale as shipped from its current fulfillment state (${sale.fulfillmentStatus ?? 'not yet confirmed'})`,
+      );
+    }
+    sale.fulfillmentStatus = SaleFulfillmentStatus.Shipped;
+    sale.shippedAt = new Date();
+    sale.updatedBy = userId;
+    return this.saleRepository.save(sale);
+  }
+
+  async deliver(id: string, companyId: string, userId: string): Promise<Sale> {
+    const sale = await this.findByIdInCompany(id, companyId);
+    if (sale.fulfillmentStatus !== SaleFulfillmentStatus.Shipped) {
+      throw new AppException(
+        ErrorCode.Conflict,
+        'Only a shipped sale can be marked as delivered',
+      );
+    }
+    sale.fulfillmentStatus = SaleFulfillmentStatus.Delivered;
+    sale.deliveredAt = new Date();
     sale.updatedBy = userId;
     return this.saleRepository.save(sale);
   }

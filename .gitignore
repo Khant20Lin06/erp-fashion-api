@@ -37,3 +37,6 @@ Thumbs.db
 # stack)
 /test-*.js
 /text.txt
+/.tmp*
+/set_bot_pw.js
+/scratch/

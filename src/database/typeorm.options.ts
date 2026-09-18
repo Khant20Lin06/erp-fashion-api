@@ -111,6 +111,7 @@ import { AiConversation } from '../modules/ai-assistant/entities/ai-conversation
 import { AiMessage } from '../modules/ai-assistant/entities/ai-message.entity';
 import { AiKnowledgeDocument } from '../modules/ai-assistant/entities/ai-knowledge-document.entity';
 import { AiKnowledgeChunk } from '../modules/ai-assistant/entities/ai-knowledge-chunk.entity';
+import { AiToolAuditLog } from '../modules/ai-assistant/entities/ai-tool-audit-log.entity';
 import { Uom } from '../modules/uom/entities/uom.entity';
 
 /**
@@ -235,6 +236,7 @@ const entities = [
   AiMessage,
   AiKnowledgeDocument,
   AiKnowledgeChunk,
+  AiToolAuditLog,
 ];
 
 export function buildDataSourceOptions(

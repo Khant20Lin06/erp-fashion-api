@@ -19,6 +19,7 @@ import { ProductVariantUomsController } from './controllers/product-variant-uoms
 import { BarcodesController } from './controllers/barcodes.controller';
 import { PriceListsController } from './controllers/price-lists.controller';
 import { PriceListItemsController } from './controllers/price-list-items.controller';
+import { ProductImagesController } from './controllers/product-images.controller';
 import { AuthModule } from '../auth/auth.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { OrganizationModule } from '../organization/organization.module';
@@ -51,6 +52,7 @@ import { Uom } from '../uom/entities/uom.entity';
     BarcodesController,
     PriceListsController,
     PriceListItemsController,
+    ProductImagesController,
   ],
   providers: [
     ProductsService,

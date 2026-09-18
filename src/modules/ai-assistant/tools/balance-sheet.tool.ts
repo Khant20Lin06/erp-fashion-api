@@ -24,6 +24,7 @@ export class BalanceSheetTool implements AiTool {
     },
   };
   readonly requiredPermission = 'reports.balance_sheet.read';
+  readonly dataScopeResource = 'reports';
 
   constructor(private readonly balanceSheetService: BalanceSheetService) {}
 

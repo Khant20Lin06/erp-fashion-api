@@ -152,6 +152,14 @@ export const envValidationSchema = Joi.object({
   // this same bug, now generalized to every optional AI/Ollama var here).
   AI_BASE_URL: Joi.string().uri().allow('').optional(),
   AI_API_KEY: Joi.string().allow('').optional(),
+  CUSTOMER_MULTI_AGENT_ENABLED: Joi.boolean().default(false),
+  CUSTOMER_MULTI_AGENT_PROVIDER: Joi.string()
+    .valid('google', 'openai-compatible')
+    .default('google'),
+  CUSTOMER_MULTI_AGENT_MODEL: Joi.string().allow('').optional(),
+  GOOGLE_GENERATIVE_AI_API_KEY: Joi.string().allow('').optional(),
+  GEMINI_API_KEY: Joi.string().allow('').optional(),
+  BOT_SESSION_ALLOWED_EMAILS: Joi.string().allow('').default(''),
   AI_CHAT_MODEL: Joi.string().allow('').optional(),
   AI_EMBEDDING_MODEL: Joi.string().allow('').optional(),
   // A chat provider often doesn't serve embeddings at all (OpenRouter has

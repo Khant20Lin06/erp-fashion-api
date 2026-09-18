@@ -35,13 +35,25 @@ import type { AuthenticatedUser } from '../../auth/types/authenticated-user';
 
 @ApiTags('Organization - User Membership')
 @Controller('users/:userId')
-@UseGuards(JwtAuthGuard, PermissionGuard)
+@UseGuards(JwtAuthGuard)
 export class UserOrganizationController {
   constructor(
     private readonly userOrganizationService: UserOrganizationService,
     private readonly authorizationService: AuthorizationService,
   ) {}
 
+  /**
+   * Not @RequirePermission-guarded: visibility here is "own records always
+   * readable, another user's records need user_organizations.read" — a
+   * per-request self-or-permission check that a static permission code
+   * can't express, so it's enforced in assertCanReadMemberships() instead.
+   * PermissionGuard is intentionally NOT applied at the class level here —
+   * NestJS accumulates class + method @UseGuards rather than letting a
+   * method-level list override the class-level one, so a class-level
+   * PermissionGuard would still run (and deny-by-default) on this handler
+   * even with no method-level PermissionGuard added back. Mutating
+   * endpoints below opt into PermissionGuard explicitly per-method instead.
+   */
   @Get('companies')
   async listCompanies(
     @Param('userId', ParseUUIDPipe) userId: string,
@@ -54,6 +66,7 @@ export class UserOrganizationController {
   }
 
   @Post('companies')
+  @UseGuards(PermissionGuard)
   @RequirePermission('user_organizations.assign')
   async assignCompany(
     @Param('userId', ParseUUIDPipe) userId: string,
@@ -68,6 +81,7 @@ export class UserOrganizationController {
 
   @Delete('companies/:companyId')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(PermissionGuard)
   @RequirePermission('user_organizations.remove')
   async removeCompany(
     @Param('userId', ParseUUIDPipe) userId: string,
@@ -79,6 +93,7 @@ export class UserOrganizationController {
     );
   }
 
+  /** See listCompanies's docblock — same self-or-permission pattern. */
   @Get('branches')
   async listBranches(
     @Param('userId', ParseUUIDPipe) userId: string,
@@ -91,6 +106,7 @@ export class UserOrganizationController {
   }
 
   @Post('branches')
+  @UseGuards(PermissionGuard)
   @RequirePermission('user_organizations.assign')
   async assignBranch(
     @Param('userId', ParseUUIDPipe) userId: string,
@@ -105,6 +121,7 @@ export class UserOrganizationController {
 
   @Delete('branches/:branchId')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(PermissionGuard)
   @RequirePermission('user_organizations.remove')
   async removeBranch(
     @Param('userId', ParseUUIDPipe) userId: string,
@@ -113,6 +130,7 @@ export class UserOrganizationController {
     await this.userOrganizationService.removeBranchMembership(userId, branchId);
   }
 
+  /** See listCompanies's docblock — same self-or-permission pattern. */
   @Get('warehouses')
   async listWarehouses(
     @Param('userId', ParseUUIDPipe) userId: string,
@@ -125,6 +143,7 @@ export class UserOrganizationController {
   }
 
   @Post('warehouses')
+  @UseGuards(PermissionGuard)
   @RequirePermission('user_organizations.assign')
   async assignWarehouse(
     @Param('userId', ParseUUIDPipe) userId: string,
@@ -139,6 +158,7 @@ export class UserOrganizationController {
 
   @Delete('warehouses/:warehouseId')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(PermissionGuard)
   @RequirePermission('user_organizations.remove')
   async removeWarehouse(
     @Param('userId', ParseUUIDPipe) userId: string,

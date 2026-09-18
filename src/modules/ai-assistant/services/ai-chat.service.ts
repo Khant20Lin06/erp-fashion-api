@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AiConfig } from '../../../config/ai.config';
 import { AiConversationService } from './ai-conversation.service';
@@ -12,6 +12,7 @@ import {
   AiChatRequestDto,
   AiChatSourceDto,
   AiModelInfoDto,
+  SupervisorTraceDto,
 } from '../dto/ai-chat.dto';
 import { AuthenticatedUser } from '../../auth/types/authenticated-user';
 import { AppException } from '../../../core/errors/app.exception';
@@ -24,6 +25,10 @@ import type {
   LlmProvider,
   LlmToolCall,
 } from '../providers/llm-provider.interface';
+
+import { AiGuardrailsService } from './ai-guardrails.service';
+import { AiDomainAgentRegistryService } from './ai-domain-agent-registry.service';
+import { AiSupervisorService } from './ai-supervisor.service';
 
 const MAX_TOOL_ROUNDS = 3;
 /** Reproduced live: a tool result with ~1600+ rows (get_inventory_stock_summary
@@ -63,6 +68,7 @@ const MAX_TOOL_RESULT_ARRAY_ROWS = 25;
 export class AiChatService {
   private readonly logger = new Logger(AiChatService.name);
   private readonly aiConfig: AiConfig;
+  private readonly guardrailsService: AiGuardrailsService;
 
   constructor(
     private readonly conversationService: AiConversationService,
@@ -70,8 +76,14 @@ export class AiChatService {
     private readonly ragService: AiRagService,
     @Inject(LLM_PROVIDER) private readonly llmProvider: LlmProvider,
     configService: ConfigService,
+    @Optional() guardrailsService?: AiGuardrailsService,
+    @Optional()
+    private readonly agentRegistryService?: AiDomainAgentRegistryService,
+    @Optional()
+    private readonly supervisorService?: AiSupervisorService,
   ) {
     this.aiConfig = configService.get<AiConfig>('ai')!;
+    this.guardrailsService = guardrailsService ?? new AiGuardrailsService();
   }
 
   /** GET /ai/chat/models. Backed by the live provider catalog
@@ -134,6 +146,8 @@ export class AiChatService {
     message: AiMessage;
     sources: AiChatSourceDto[];
     mode: AiChatMode;
+    agent?: string;
+    supervisorTrace?: SupervisorTraceDto;
   }> {
     const conversation = await this.conversationService.getOrCreate(
       dto.conversationId,
@@ -142,20 +156,101 @@ export class AiChatService {
       user.id,
     );
 
+    const inputValidation = this.guardrailsService.validateInput(dto.message);
+    if (!inputValidation.safe) {
+      await this.conversationService.appendMessage(
+        conversation.id,
+        AiMessageRole.User,
+        dto.message,
+      );
+      const assistantMessage = await this.conversationService.appendMessage(
+        conversation.id,
+        AiMessageRole.Assistant,
+        'လုံခြုံရေးစည်းမျဉ်းများအရ ဤမေးခွန်းကို ဆောင်ရွက်ခွင့်မရှိပါခင်ဗျာ။ (Security Notice: Request blocked by AI Guardrails).',
+      );
+      return {
+        conversation,
+        message: assistantMessage,
+        sources: [],
+        mode: 'local_fallback',
+        agent: dto.agent,
+      };
+    }
+
+    // 2. Supervisor Dynamic Routing & Authorization
+    let routeDecision: {
+      targetAgent: string;
+      trace?: SupervisorTraceDto;
+      unauthorized?: boolean;
+      unauthorizedReason?: string;
+    } | null = null;
+
+    if (this.supervisorService) {
+      routeDecision = await this.supervisorService.route(
+        user,
+        dto.message,
+        dto.agent,
+      );
+    }
+
+    if (routeDecision?.unauthorized) {
+      await this.conversationService.appendMessage(
+        conversation.id,
+        AiMessageRole.User,
+        dto.message,
+      );
+      const assistantMessage = await this.conversationService.appendMessage(
+        conversation.id,
+        AiMessageRole.Assistant,
+        routeDecision.unauthorizedReason ??
+          'ဤအချက်အလက်ကို ကြည့်ရှုရန် သင့်အကောင့်တွင် ခွင့်ပြုချက် (Permission) မရှိပါခင်ဗျာ။',
+      );
+      return {
+        conversation,
+        message: assistantMessage,
+        sources: [],
+        mode: 'local_fallback',
+        agent: routeDecision.targetAgent,
+        supervisorTrace: routeDecision.trace,
+      };
+    }
+
+    const resolvedAgentType = routeDecision
+      ? (routeDecision.targetAgent as any)
+      : dto.agent;
+
+    const domainAgent = resolvedAgentType
+      ? this.agentRegistryService?.getAgent(resolvedAgentType)
+      : undefined;
+
     const userMessage = await this.conversationService.appendMessage(
       conversation.id,
       AiMessageRole.User,
       dto.message,
     );
 
+    const systemPrompt = domainAgent
+      ? domainAgent.getSystemPrompt()
+      : AI_SYSTEM_PROMPT;
+
+    const allowedToolNames = domainAgent
+      ? domainAgent.getAllowedTools()
+      : undefined;
+
+    const shouldRetrieveRag = domainAgent
+      ? domainAgent.getDescriptor().ragEnabled
+      : true;
+
     const [availableTools, ragChunks, history] = await Promise.all([
-      this.toolExecutorService.listAvailableTools(user),
-      this.retrieveRagContext(companyId, dto.message),
+      this.toolExecutorService.listAvailableTools(user, allowedToolNames),
+      shouldRetrieveRag
+        ? this.retrieveRagContext(companyId, dto.message)
+        : Promise.resolve([]),
       this.conversationService.getRecentMessages(conversation.id),
     ]);
 
     const messages: LlmChatMessage[] = [
-      { role: 'system', content: AI_SYSTEM_PROMPT },
+      { role: 'system', content: systemPrompt },
     ];
     if (ragChunks.length > 0) {
       messages.push({
@@ -175,6 +270,7 @@ export class AiChatService {
         user,
         companyId,
         dto.branchId,
+        conversation.id,
         messages,
         availableTools,
         requestedModel,
@@ -229,7 +325,14 @@ export class AiChatService {
       chunkIndex: chunk.chunkIndex,
     }));
 
-    return { conversation, message: assistantMessage, sources, mode };
+    return {
+      conversation,
+      message: assistantMessage,
+      sources,
+      mode,
+      agent: domainAgent?.id ?? resolvedAgentType,
+      supervisorTrace: routeDecision?.trace,
+    };
   }
 
   /**
@@ -296,6 +399,7 @@ export class AiChatService {
     user: AuthenticatedUser,
     companyId: string,
     branchId: string | undefined,
+    conversationId: string,
     messages: LlmChatMessage[],
     availableTools: LlmChatOptions['tools'],
     requestedModel: string | undefined,
@@ -332,6 +436,7 @@ export class AiChatService {
           user,
           companyId,
           branchId,
+          conversationId,
           toolCall,
         );
         conversationMessages.push({
@@ -353,6 +458,7 @@ export class AiChatService {
     user: AuthenticatedUser,
     companyId: string,
     branchId: string | undefined,
+    conversationId: string,
     toolCall: LlmToolCall,
   ): Promise<unknown> {
     let parsedArguments: unknown = {};
@@ -374,6 +480,7 @@ export class AiChatService {
       parsedArguments,
       companyId,
       branchId,
+      { conversationId },
     );
   }
 

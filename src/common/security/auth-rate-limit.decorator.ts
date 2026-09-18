@@ -4,7 +4,9 @@ export type AuthRateLimitMode =
   | 'login'
   | 'forgot-password'
   | 'reset-password'
-  | 'refresh';
+  | 'refresh'
+  | 'telegram-link-request'
+  | 'telegram-link-verify';
 
 export const AUTH_RATE_LIMIT_METADATA_KEY = 'auth-rate-limit-mode';
 
