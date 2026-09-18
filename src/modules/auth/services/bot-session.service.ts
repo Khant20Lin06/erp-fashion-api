@@ -83,11 +83,9 @@ export class BotSessionService {
       // Share the ordinary login bucket so switching endpoints cannot multiply
       // credential guesses. Verified cache hits do not consume this quota.
       await this.consumeAttempt(ip, normalizedEmail);
-      // Temporarily bypass password verification for allowlisted bots
-      // to resolve credential sync issues from n8n cloud.
-      // if (!(await this.passwords.verify(password, user.passwordHash))) {
-      //   throw new UnauthorizedException('Invalid email or password');
-      // }
+      if (!(await this.passwords.verify(password, user.passwordHash))) {
+        throw new UnauthorizedException('Invalid email or password');
+      }
 
       const accessToken = this.tokens.signAccessToken(user.id);
       const payload = this.tokens.verifyAccessToken(accessToken);
