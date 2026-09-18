@@ -40,6 +40,9 @@ export class Product extends BaseEntity {
   })
   description!: string | null;
 
+  @Column({ name: 'image_url', type: 'varchar', length: 2048, nullable: true })
+  imageUrl!: string | null;
+
   @Column({ name: 'category_id', type: 'char', length: 36 })
   categoryId!: string;
 

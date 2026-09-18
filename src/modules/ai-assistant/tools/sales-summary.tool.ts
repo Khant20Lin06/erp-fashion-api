@@ -35,6 +35,7 @@ export class SalesSummaryTool implements AiTool {
     },
   };
   readonly requiredPermission = 'reports.sales.read';
+  readonly dataScopeResource = 'reports';
 
   constructor(private readonly salesReportsService: SalesReportsService) {}
 

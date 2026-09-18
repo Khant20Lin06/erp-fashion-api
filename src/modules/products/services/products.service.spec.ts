@@ -31,7 +31,10 @@ import { UomCategory } from '../../uom/entities/uom-category.enum';
 describe('ProductsService', () => {
   let service: ProductsService;
   let productRepository: jest.Mocked<
-    Pick<Repository<Product>, 'findOne' | 'softRemove' | 'createQueryBuilder'>
+    Pick<
+      Repository<Product>,
+      'findOne' | 'save' | 'softRemove' | 'createQueryBuilder'
+    >
   >;
   let variantRepository: jest.Mocked<
     Pick<Repository<ProductVariant>, 'find' | 'softRemove'>
@@ -151,6 +154,7 @@ describe('ProductsService', () => {
     };
     productRepository = {
       findOne: jest.fn(),
+      save: jest.fn(),
       softRemove: jest.fn(),
       createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
     };
@@ -197,6 +201,30 @@ describe('ProductsService', () => {
     );
   });
 
+  it('persists image updates, preserves omitted images and allows explicit clearing', async () => {
+    const stored = buildProduct({
+      imageUrl: 'https://images.example.com/old.jpg',
+    });
+    productRepository.findOne.mockResolvedValue(stored);
+    productRepository.save.mockImplementation((product) =>
+      Promise.resolve(product as Product),
+    );
+    expect((await service.update(stored.id, 'company-a', {})).imageUrl).toBe(
+      'https://images.example.com/old.jpg',
+    );
+    expect(
+      (
+        await service.update(stored.id, 'company-a', {
+          imageUrl: 'https://images.example.com/new.jpg',
+        })
+      ).imageUrl,
+    ).toBe('https://images.example.com/new.jpg');
+    expect(
+      (await service.update(stored.id, 'company-a', { imageUrl: null }))
+        .imageUrl,
+    ).toBeNull();
+  });
+
   describe('create', () => {
     const validDto = {
       code: 'TSHIRT',
@@ -221,9 +249,14 @@ describe('ProductsService', () => {
       productRepository.findOne.mockResolvedValue(null); // duplicate-code check
       managerMock.findOne.mockResolvedValue(null); // SKU-available check inside transaction
 
-      const result = await service.create('company-a', validDto);
+      const input = {
+        ...validDto,
+        imageUrl: 'https://images.example.com/tshirt.jpg',
+      };
+      const result = await service.create('company-a', input);
 
       expect(result.code).toBe('TSHIRT');
+      expect(result).toHaveProperty('imageUrl', input.imageUrl);
       expect(transactionService.run).toHaveBeenCalledTimes(1);
       expect(managerMock.save).toHaveBeenCalledWith(
         Product,
@@ -444,9 +477,9 @@ describe('ProductsService', () => {
         },
       ] as unknown as PurchaseOrderItem[]);
 
-      await expect(service.remove('product-1', 'company-a')).rejects.toMatchObject(
-        { errorCode: ErrorCode.Conflict },
-      );
+      await expect(
+        service.remove('product-1', 'company-a'),
+      ).rejects.toMatchObject({ errorCode: ErrorCode.Conflict });
       expect(variantRepository.softRemove).not.toHaveBeenCalled();
       expect(productRepository.softRemove).not.toHaveBeenCalled();
     });

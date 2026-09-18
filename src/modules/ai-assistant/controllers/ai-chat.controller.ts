@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Optional, Post, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../rbac/guards/permission.guard';
@@ -19,6 +19,8 @@ import {
   toAiMessageResponseDto,
 } from '../dto/ai-conversations.dto';
 import { AiChatService } from '../services/ai-chat.service';
+import { AiDomainAgentRegistryService } from '../services/ai-domain-agent-registry.service';
+import type { DomainAgentDescriptor } from '../agents/domain-agent.interface';
 
 const RESOURCE = 'ai_assistant';
 
@@ -44,12 +46,26 @@ export class AiChatController {
   constructor(
     private readonly aiChatService: AiChatService,
     private readonly dataScopeService: DataScopeService,
+    @Optional()
+    private readonly domainAgentRegistryService?: AiDomainAgentRegistryService,
   ) {}
 
   @Get('models')
   @RequirePermission('ai_assistant.chat')
   async listModels(): Promise<AiModelsResponseDto> {
     return this.aiChatService.listAvailableModels();
+  }
+
+  @Get('agents')
+  @RequirePermission('ai_assistant.chat')
+  async listAgents(
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<DomainAgentDescriptor[]> {
+    return (
+      (await this.domainAgentRegistryService?.listAvailableAgentsForUser(
+        user,
+      )) ?? []
+    );
   }
 
   @Post()
@@ -67,7 +83,7 @@ export class AiChatController {
       dto.companyId,
     );
 
-    const { conversation, message, sources, mode } =
+    const { conversation, message, sources, mode, agent, supervisorTrace } =
       await this.aiChatService.chat(user, companyId, dto);
 
     return {
@@ -75,6 +91,8 @@ export class AiChatController {
       message: toAiMessageResponseDto(message),
       sources,
       mode,
+      agent,
+      supervisorTrace,
     };
   }
 }

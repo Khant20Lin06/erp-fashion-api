@@ -107,6 +107,38 @@ export class ProductVariantsService {
     return variant;
   }
 
+  /**
+   * Used by CustomerPortalService to resolve a bot-supplied SKU string
+   * (e.g. from a "/order SKU-001 x2" Telegram command) to a real, active
+   * product variant — never trusts a client-supplied productVariantId
+   * directly for that path, since a raw SKU string carries no proof it
+   * corresponds to a real/active variant in this company.
+   */
+  async findBySkuInCompany(
+    companyId: string,
+    sku: string,
+  ): Promise<ProductVariant | null> {
+    return this.variantRepository.findOne({ where: { companyId, sku } });
+  }
+
+  /**
+   * Same lookup as findBySkuInCompany, but with the `product` relation
+   * loaded — used only by CustomerPortalService's cart-display endpoint,
+   * which needs product.name for a friendly line item and must not fall
+   * back to the admin-facing findAll()'s full column set (costPrice,
+   * margin, etc. — see ProductLookupTool's own docblock for the same
+   * customer-safety rationale).
+   */
+  async findBySkuInCompanyWithProduct(
+    companyId: string,
+    sku: string,
+  ): Promise<ProductVariant | null> {
+    return this.variantRepository.findOne({
+      where: { companyId, sku },
+      relations: { product: true },
+    });
+  }
+
   async findAttributes(
     variantId: string,
   ): Promise<VariantAttributeResponseDto[]> {

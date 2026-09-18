@@ -16,9 +16,14 @@ export interface AuthConfig {
   refreshCookieName: string;
   refreshCookiePath: string;
   refreshTokenExpiresInDays: number;
+  botSessionAllowedEmails: string[];
 }
 
 export default registerAs('auth', (): AuthConfig => ({
+  botSessionAllowedEmails: (process.env.BOT_SESSION_ALLOWED_EMAILS ?? '')
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean),
   jwtSecret: process.env.JWT_SECRET ?? '',
   jwtAccessTokenExpiresIn: process.env.JWT_ACCESS_TOKEN_EXPIRES_IN ?? '15m',
   jwtIssuer: process.env.JWT_ISSUER ?? 'fashion-erp-backend',

@@ -16,6 +16,7 @@ import { User } from '../../users/entities/user.entity';
 import { SaleItem } from './sale-item.entity';
 import { SaleStatus } from './sale-status.enum';
 import { SaleType } from './sale-type.enum';
+import { SaleFulfillmentStatus } from './sale-fulfillment-status.enum';
 
 /**
  * Sale header (Phase 12 locked decisions). Company-scoped as the primary
@@ -46,7 +47,15 @@ import { SaleType } from './sale-type.enum';
  */
 @Entity('sales')
 @Index(['companyId', 'saleNumber'], { unique: true })
+@Index('uq_sales_creation_key', ['companyId', 'creationKey'], { unique: true })
 export class Sale extends BaseEntity {
+  /** Internal integration retry identity, committed with the sale and items. */
+  @Column({ name: 'creation_key', type: 'char', length: 64, nullable: true })
+  creationKey!: string | null;
+
+  @Column({ name: 'creation_hash', type: 'char', length: 64, nullable: true })
+  creationHash!: string | null;
+
   @Column({ name: 'sale_number', type: 'varchar', length: 50 })
   saleNumber!: string;
 
@@ -165,6 +174,28 @@ export class Sale extends BaseEntity {
 
   @Column({ name: 'notes', type: 'varchar', length: 1000, nullable: true })
   notes!: string | null;
+
+  /**
+   * Post-confirmation fulfillment tracking (Customer Order Bot addition).
+   * Deliberately NOT part of SaleStatus (Phase 12 locked decision §E: only
+   * DRAFT/CONFIRMED/CANCELLED) — this is separate metadata for physical
+   * shipping/delivery progress, null until the sale is CONFIRMED and a
+   * fulfillment action is recorded. Never set on DRAFT/CANCELLED sales.
+   */
+  @Index()
+  @Column({
+    name: 'fulfillment_status',
+    type: 'enum',
+    enum: SaleFulfillmentStatus,
+    nullable: true,
+  })
+  fulfillmentStatus!: SaleFulfillmentStatus | null;
+
+  @Column({ name: 'shipped_at', type: 'timestamp', nullable: true })
+  shippedAt!: Date | null;
+
+  @Column({ name: 'delivered_at', type: 'timestamp', nullable: true })
+  deliveredAt!: Date | null;
 
   @Column({ name: 'created_by', type: 'char', length: 36, nullable: true })
   createdBy!: string | null;

@@ -33,6 +33,8 @@ import { MasterDataModule } from './modules/master-data/master-data.module';
 import { ProductsModule } from './modules/products/products.module';
 import { CustomerSupplierModule } from './modules/customer-supplier/customer-supplier.module';
 import { SalesModule } from './modules/sales/sales.module';
+import { CustomerPortalModule } from './modules/customer-portal/customer-portal.module';
+import { OnlineOrdersModule } from './modules/online-orders/online-orders.module';
 import { PurchaseModule } from './modules/purchase/purchase.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { PaymentsModule } from './modules/payments/payments.module';
@@ -102,6 +104,8 @@ const databaseImport = isOpenApiGenerationMode()
     ProductsModule,
     CustomerSupplierModule,
     SalesModule,
+    CustomerPortalModule,
+    OnlineOrdersModule,
     PurchaseModule,
     InventoryModule,
     PromotionsModule,

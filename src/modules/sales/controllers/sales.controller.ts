@@ -189,4 +189,40 @@ export class SalesController {
     const entity = await this.salesService.cancel(id, companyId, user.id);
     return toSaleResponseDto(entity);
   }
+
+  @Post(':id/ship')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('sales.ship')
+  async ship(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('companyId') companyIdQuery?: string,
+  ): Promise<SaleResponseDto> {
+    const companyId = await resolveRequestCompanyId(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+    );
+    const entity = await this.salesService.ship(id, companyId, user.id);
+    return toSaleResponseDto(entity);
+  }
+
+  @Post(':id/deliver')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('sales.deliver')
+  async deliver(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('companyId') companyIdQuery?: string,
+  ): Promise<SaleResponseDto> {
+    const companyId = await resolveRequestCompanyId(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+    );
+    const entity = await this.salesService.deliver(id, companyId, user.id);
+    return toSaleResponseDto(entity);
+  }
 }

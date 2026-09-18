@@ -5,6 +5,7 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { IsPublicImageUrl } from '../utils/public-image-url';
 
 /** `code` and `productType` are deliberately absent — immutable after creation. */
 export class UpdateProductDto {
@@ -18,6 +19,10 @@ export class UpdateProductDto {
   @IsString()
   @MaxLength(1000)
   description?: string;
+
+  @IsOptional()
+  @IsPublicImageUrl()
+  imageUrl?: string | null;
 
   @IsOptional()
   @IsUUID()

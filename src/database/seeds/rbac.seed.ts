@@ -635,6 +635,16 @@ const PERMISSION_CATALOG: Array<{
   { resource: 'sales', action: 'confirm', description: 'Confirm a draft sale' },
   { resource: 'sales', action: 'cancel', description: 'Cancel a draft sale' },
   {
+    resource: 'sales',
+    action: 'ship',
+    description: 'Mark a confirmed sale as shipped (fulfillment tracking)',
+  },
+  {
+    resource: 'sales',
+    action: 'deliver',
+    description: 'Mark a shipped sale as delivered (fulfillment tracking)',
+  },
+  {
     resource: 'sale_items',
     action: 'read',
     description: 'View sale line items',
@@ -1056,6 +1066,19 @@ const PERMISSION_CATALOG: Array<{
     action: 'cancel',
     description: 'Cancel a draft sales return',
   },
+  // Online Orders (bot/online-placed orders — a document type wrapping a
+  // Sale, see OnlineOrder's own docblock)
+  {
+    resource: 'online_orders',
+    action: 'read',
+    description: 'View bot/online-placed orders',
+  },
+  {
+    resource: 'online_orders',
+    action: 'update_status',
+    description:
+      'Move a bot/online-placed order through its delivery lifecycle (confirm/pack/ship/deliver/cancel)',
+  },
   {
     resource: 'sales',
     action: 'discount.apply',
@@ -1150,6 +1173,32 @@ const PERMISSION_CATALOG: Array<{
     action: 'ingest',
     description: 'Trigger re-ingestion of an AI knowledge-base document',
   },
+  // Customer Portal (bot integration) — scoped to the CUSTOMER_SERVICE_BOT
+  // and CUSTOMER_ORDER_BOT service-account roles only. See
+  // create-bot-accounts.seed.ts.
+  {
+    resource: 'customer_portal',
+    action: 'link',
+    description:
+      'Request/verify a Telegram-to-customer identity link (Customer Service Bot)',
+  },
+  {
+    resource: 'customer_portal',
+    action: 'order.create',
+    description: 'Create a customer-initiated draft order (Customer Service Bot)',
+  },
+  {
+    resource: 'customer_portal',
+    action: 'profile',
+    description:
+      "Read/update the linked customer's own name/phone (Customer Service Bot)",
+  },
+  {
+    resource: 'customer_portal',
+    action: 'notify_lookup',
+    description:
+      "Resolve a customer's linked Telegram user id for order-status notifications (Customer Order Bot)",
+  },
 ];
 
 /**
@@ -1236,6 +1285,7 @@ const SUPER_ADMIN_ALL_SCOPE_RESOURCES: readonly string[] = [
   'payroll_runs',
   // Returns / Discounts / Loyalty
   'sales_returns',
+  'online_orders',
   'promotions',
   'loyalty',
   'webhooks',

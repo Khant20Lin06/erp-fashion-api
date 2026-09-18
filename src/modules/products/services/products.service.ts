@@ -342,6 +342,7 @@ export class ProductsService {
         code: dto.code,
         name: dto.name,
         description: dto.description ?? null,
+        imageUrl: dto.imageUrl ?? null,
         categoryId: dto.categoryId,
         brandId: dto.brandId,
         collectionId: dto.collectionId ?? null,
@@ -416,6 +417,7 @@ export class ProductsService {
     }
     if (dto.name !== undefined) product.name = dto.name;
     if (dto.description !== undefined) product.description = dto.description;
+    if (dto.imageUrl !== undefined) product.imageUrl = dto.imageUrl;
 
     return this.productRepository.save(product);
   }

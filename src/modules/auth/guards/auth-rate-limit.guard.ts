@@ -93,6 +93,13 @@ export class AuthRateLimitGuard implements CanActivate {
       }
     }
 
+    if (mode === 'telegram-link-request' || mode === 'telegram-link-verify') {
+      const telegramUserId = request.body?.telegramUserId;
+      if (typeof telegramUserId === 'string' && telegramUserId.trim().length > 0) {
+        return `${ip}:${telegramUserId.trim()}`;
+      }
+    }
+
     return ip;
   }
 }

@@ -41,6 +41,7 @@ export class SlowMovingStockTool implements AiTool {
     },
   };
   readonly requiredPermission = 'reports.inventory.read';
+  readonly dataScopeResource = 'reports';
 
   constructor(
     private readonly inventoryReportsService: InventoryReportsService,

@@ -36,6 +36,11 @@ export class AiChatRequestDto {
   @IsString()
   @MaxLength(200)
   model?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  agent?: 'inventory' | 'sales_pos' | 'finance' | 'customer_service';
 }
 
 export interface AiChatSourceDto {
@@ -55,11 +60,21 @@ export interface AiChatSourceDto {
  */
 export type AiChatMode = 'remote_llm' | 'local_llm' | 'local_fallback';
 
+export interface SupervisorTraceDto {
+  selectedAgent: string;
+  intent: string;
+  confidence: number;
+  reasoning: string;
+  delegationPath: string[];
+}
+
 export interface AiChatResponseDto {
   conversation: AiConversationResponseDto;
   message: AiMessageResponseDto;
   sources: AiChatSourceDto[];
   mode: AiChatMode;
+  agent?: string;
+  supervisorTrace?: SupervisorTraceDto;
 }
 
 export interface AiModelInfoDto {

@@ -31,11 +31,14 @@
     "seed:linked-business": "ts-node -r tsconfig-paths/register src/database/seeds/linked-business.seed.ts",
     "seed:real-data": "npm run seed:rbac && npm run seed:admin && npm run seed:enterprise && npm run seed:bulk && npm run seed:linked-business && npm run repair:variant-attributes",
     "seed:rbac": "ts-node -r tsconfig-paths/register src/database/seeds/rbac.seed.ts",
+    "seed:bot-accounts": "ts-node -r tsconfig-paths/register src/database/seeds/create-bot-accounts.seed.ts",
     "repair:variant-attributes": "ts-node -r tsconfig-paths/register src/database/scripts/repair-variant-attribute-links.ts",
     "backup:db": "bash scripts/backup-database.sh",
     "restore:db": "bash scripts/restore-database.sh"
   },
   "dependencies": {
+    "@ai-sdk/google": "4.0.69",
+    "@ai-sdk/openai-compatible": "3.0.48",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.0.1",
@@ -45,6 +48,7 @@
     "@nestjs/swagger": "^11.4.6",
     "@nestjs/typeorm": "^11.0.3",
     "@node-rs/argon2": "^2.0.2",
+    "ai": "7.0.99",
     "bullmq": "^6.1.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
@@ -62,7 +66,8 @@
     "rxjs": "^7.8.1",
     "swagger-ui-express": "^5.0.1",
     "typeorm": "^0.3.31",
-    "uuid": "^14.0.1"
+    "uuid": "^14.0.1",
+    "zod": "4.1.8"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -73,6 +78,7 @@
     "@types/cookie-parser": "^1.4.10",
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
+    "@types/multer": "^2.2.0",
     "@types/node": "^24.0.0",
     "@types/supertest": "^7.0.0",
     "eslint": "^9.18.0",

@@ -1,6 +1,7 @@
 import { Sale } from '../entities/sale.entity';
 import { SaleStatus } from '../entities/sale-status.enum';
 import { SaleType } from '../entities/sale-type.enum';
+import { SaleFulfillmentStatus } from '../entities/sale-fulfillment-status.enum';
 import {
   SaleItemResponseDto,
   toSaleItemResponseDto,
@@ -27,6 +28,9 @@ export interface SaleResponseDto {
   balanceAmount: string;
   currency: string;
   notes: string | null;
+  fulfillmentStatus: SaleFulfillmentStatus | null;
+  shippedAt: Date | null;
+  deliveredAt: Date | null;
   createdBy: string | null;
   updatedBy: string | null;
   createdAt: Date;
@@ -54,6 +58,9 @@ export function toSaleResponseDto(entity: Sale): SaleResponseDto {
     balanceAmount: entity.balanceAmount,
     currency: entity.currency,
     notes: entity.notes,
+    fulfillmentStatus: entity.fulfillmentStatus,
+    shippedAt: entity.shippedAt,
+    deliveredAt: entity.deliveredAt,
     createdBy: entity.createdBy,
     updatedBy: entity.updatedBy,
     createdAt: entity.createdAt,

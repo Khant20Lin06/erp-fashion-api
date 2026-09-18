@@ -35,7 +35,7 @@ describe('GlobalExceptionFilter', () => {
 
     mockHost = {
       switchToHttp: () => ({
-        getResponse: () => ({ status: mockStatus }),
+        getResponse: () => ({ type: () => ({ status: mockStatus }) }),
         getRequest: () => ({
           method: 'GET',
           originalUrl: '/api/v1/example',
@@ -93,7 +93,7 @@ describe('GlobalExceptionFilter', () => {
   it('should fall back to "unknown" requestId when header is missing', () => {
     mockHost = {
       switchToHttp: () => ({
-        getResponse: () => ({ status: mockStatus }),
+        getResponse: () => ({ type: () => ({ status: mockStatus }) }),
         getRequest: () => ({
           method: 'GET',
           originalUrl: '/api/v1/example',

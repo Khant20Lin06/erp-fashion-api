@@ -122,6 +122,22 @@ export class CustomersService {
     return customer;
   }
 
+  /**
+   * Used by CustomerPortalService to find-or-create a Customer for a
+   * newly-verified Telegram phone number. Returns the active customer for
+   * that phone only — a soft-deleted/inactive match is never silently
+   * reused (the caller's find-or-create then correctly creates a fresh
+   * customer instead).
+   */
+  async findActiveByPhone(
+    companyId: string,
+    phone: string,
+  ): Promise<Customer | null> {
+    return this.customerRepository.findOne({
+      where: { companyId, phone, status: CustomerStatus.Active },
+    });
+  }
+
   private async assertValidBranch(
     branchId: string,
     companyId: string,

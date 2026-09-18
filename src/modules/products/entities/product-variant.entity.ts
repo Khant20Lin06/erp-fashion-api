@@ -1,8 +1,9 @@
-import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne, OneToMany } from 'typeorm';
 import { BaseEntity } from '../../../database/base.entity';
 import { Company } from '../../organization/entities/company.entity';
 import { Product } from './product.entity';
 import { ProductVariantStatus } from './product-variant-status.enum';
+import { ProductVariantAttribute } from './product-variant-attribute.entity';
 import { Uom } from '../../uom/entities/uom.entity';
 
 /**
@@ -73,4 +74,7 @@ export class ProductVariant extends BaseEntity {
     default: ProductVariantStatus.Active,
   })
   status!: ProductVariantStatus;
+
+  @OneToMany(() => ProductVariantAttribute, (attr) => attr.variant)
+  attributes?: ProductVariantAttribute[];
 }

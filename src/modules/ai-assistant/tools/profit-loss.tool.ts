@@ -30,6 +30,7 @@ export class ProfitLossTool implements AiTool {
     },
   };
   readonly requiredPermission = 'reports.profit_loss.read';
+  readonly dataScopeResource = 'reports';
 
   constructor(private readonly profitLossService: ProfitLossService) {}
 

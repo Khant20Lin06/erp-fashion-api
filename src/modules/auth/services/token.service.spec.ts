@@ -8,6 +8,7 @@ describe('TokenService', () => {
   let jwtService: JwtService;
 
   const authConfig: AuthConfig = {
+    botSessionAllowedEmails: [],
     jwtSecret: 'a'.repeat(32),
     jwtAccessTokenExpiresIn: '15m',
     jwtIssuer: 'fashion-erp-backend',

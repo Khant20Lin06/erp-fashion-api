@@ -3,6 +3,7 @@
   "collection": "@nestjs/schematics",
   "sourceRoot": "src",
   "compilerOptions": {
+    "assets": ["modules/customer-portal/shopping/*.js"],
     "deleteOutDir": false,
     "plugins": [
       {
