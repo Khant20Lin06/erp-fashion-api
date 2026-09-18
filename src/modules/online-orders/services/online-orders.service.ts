@@ -4,6 +4,7 @@ import { FindOptionsWhere, Repository } from 'typeorm';
 import { OnlineOrder } from '../entities/online-order.entity';
 import { OnlineOrderStatus } from '../entities/online-order-status.enum';
 import { OnlineOrderSource } from '../entities/online-order-source.enum';
+import { CodStatus } from '../entities/cod-status.enum';
 import { ListOnlineOrdersDto } from '../dto/online-orders.dto';
 import { AppException } from '../../../core/errors/app.exception';
 import { ErrorCode } from '../../../core/errors/error-codes';
@@ -185,6 +186,62 @@ export class OnlineOrdersService {
     }
     order.status = targetStatus;
     order.statusUpdatedAt = new Date();
+    return this.onlineOrderRepository.save(order);
+  }
+
+  async dispatch(
+    id: string,
+    companyId: string,
+    dto: {
+      courierService: string;
+      trackingNumber?: string;
+      codAmount?: string;
+      riderName?: string;
+      riderPhone?: string;
+    },
+  ): Promise<OnlineOrder> {
+    const order = await this.findByIdInCompany(id, companyId);
+    if (
+      order.status !== OnlineOrderStatus.Packed &&
+      order.status !== OnlineOrderStatus.Confirmed
+    ) {
+      throw new AppException(
+        ErrorCode.Conflict,
+        `Order must be CONFIRMED or PACKED before dispatch. Current status: ${order.status}`,
+      );
+    }
+    order.courierService = dto.courierService;
+    order.trackingNumber = dto.trackingNumber || null;
+    order.riderName = dto.riderName || null;
+    order.riderPhone = dto.riderPhone || null;
+    if (dto.codAmount && parseFloat(dto.codAmount) > 0) {
+      order.codAmount = dto.codAmount;
+      order.codStatus = CodStatus.Pending;
+    } else {
+      order.codAmount = '0.00';
+      order.codStatus = CodStatus.None;
+    }
+    order.status = OnlineOrderStatus.OnMyWay;
+    order.statusUpdatedAt = new Date();
+    return this.onlineOrderRepository.save(order);
+  }
+
+  async settleCod(
+    id: string,
+    companyId: string,
+    userId: string,
+    dto: { collectedAmount: string; notes?: string },
+  ): Promise<OnlineOrder> {
+    const order = await this.findByIdInCompany(id, companyId);
+    if (order.codStatus !== CodStatus.Pending) {
+      throw new AppException(
+        ErrorCode.Conflict,
+        `Only orders with PENDING COD can be settled. Current status: ${order.codStatus}`,
+      );
+    }
+    order.codStatus = CodStatus.Settled;
+    order.settledAt = new Date();
+    order.settledBy = userId;
     return this.onlineOrderRepository.save(order);
   }
 }

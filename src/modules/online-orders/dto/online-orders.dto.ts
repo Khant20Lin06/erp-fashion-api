@@ -36,6 +36,13 @@ export interface OnlineOrderResponseDto {
   telegramUserId: string | null;
   telegramUsername: string | null;
   deliveryAddress: string;
+  courierService?: string | null;
+  trackingNumber?: string | null;
+  codAmount?: string;
+  codStatus?: string;
+  riderName?: string | null;
+  riderPhone?: string | null;
+  settledAt?: Date | null;
   statusUpdatedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -57,6 +64,13 @@ export function toOnlineOrderResponseDto(
     telegramUserId: entity.telegramUserId,
     telegramUsername: entity.telegramUsername,
     deliveryAddress: entity.deliveryAddress,
+    courierService: entity.courierService ?? null,
+    trackingNumber: entity.trackingNumber ?? null,
+    codAmount: entity.codAmount ?? '0.00',
+    codStatus: entity.codStatus,
+    riderName: entity.riderName ?? null,
+    riderPhone: entity.riderPhone ?? null,
+    settledAt: entity.settledAt ?? null,
     statusUpdatedAt: entity.statusUpdatedAt,
     createdAt: entity.createdAt,
     updatedAt: entity.updatedAt,

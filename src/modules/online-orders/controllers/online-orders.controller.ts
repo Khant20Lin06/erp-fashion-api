@@ -7,6 +7,7 @@ import {
   Param,
   ParseUUIDPipe,
   Patch,
+  Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -24,6 +25,8 @@ import {
   toOnlineOrderResponseDto,
   UpdateOnlineOrderStatusDto,
 } from '../dto/online-orders.dto';
+import { DispatchOnlineOrderDto } from '../dto/dispatch-online-order.dto';
+import { SettleCodDto } from '../dto/settle-cod.dto';
 import { OnlineOrdersService } from '../services/online-orders.service';
 
 const RESOURCE = 'online_orders';
@@ -103,6 +106,53 @@ export class OnlineOrdersController {
       id,
       companyId,
       dto.status,
+    );
+    return toOnlineOrderResponseDto(entity);
+  }
+
+  @Post(':id/dispatch')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('online_orders.update_status')
+  async dispatch(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: DispatchOnlineOrderDto,
+    @Query('companyId') companyIdQuery?: string,
+  ): Promise<OnlineOrderResponseDto> {
+    const companyId = await resolveRequestCompanyId(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+    );
+    const entity = await this.onlineOrdersService.dispatch(
+      id,
+      companyId,
+      dto,
+    );
+    return toOnlineOrderResponseDto(entity);
+  }
+
+  @Post(':id/settle-cod')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('online_orders.update_status')
+  async settleCod(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SettleCodDto,
+    @Query('companyId') companyIdQuery?: string,
+  ): Promise<OnlineOrderResponseDto> {
+    const companyId = await resolveRequestCompanyId(
+      this.dataScopeService,
+      user.id,
+      RESOURCE,
+      companyIdQuery,
+    );
+    const entity = await this.onlineOrdersService.settleCod(
+      id,
+      companyId,
+      user.id,
+      dto,
     );
     return toOnlineOrderResponseDto(entity);
   }

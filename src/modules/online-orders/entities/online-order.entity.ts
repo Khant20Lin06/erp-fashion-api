@@ -5,6 +5,7 @@ import { Customer } from '../../customer-supplier/entities/customer.entity';
 import { Sale } from '../../sales/entities/sale.entity';
 import { OnlineOrderSource } from './online-order-source.enum';
 import { OnlineOrderStatus } from './online-order-status.enum';
+import { CodStatus } from './cod-status.enum';
 
 /**
  * A bot/online-placed order — a dedicated document type wrapping a Sale,
@@ -82,6 +83,42 @@ export class OnlineOrder extends BaseEntity {
 
   @Column({ name: 'delivery_address', type: 'varchar', length: 500 })
   deliveryAddress!: string;
+
+  @Column({ name: 'courier_service', type: 'varchar', length: 100, nullable: true })
+  courierService!: string | null;
+
+  @Column({ name: 'tracking_number', type: 'varchar', length: 100, nullable: true })
+  trackingNumber!: string | null;
+
+  @Column({
+    name: 'cod_amount',
+    type: 'decimal',
+    precision: 14,
+    scale: 2,
+    default: '0.00',
+  })
+  codAmount!: string;
+
+  @Index()
+  @Column({
+    name: 'cod_status',
+    type: 'enum',
+    enum: CodStatus,
+    default: CodStatus.None,
+  })
+  codStatus!: CodStatus;
+
+  @Column({ name: 'rider_name', type: 'varchar', length: 100, nullable: true })
+  riderName!: string | null;
+
+  @Column({ name: 'rider_phone', type: 'varchar', length: 50, nullable: true })
+  riderPhone!: string | null;
+
+  @Column({ name: 'settled_at', type: 'timestamp', nullable: true })
+  settledAt!: Date | null;
+
+  @Column({ name: 'settled_by', type: 'char', length: 36, nullable: true })
+  settledBy!: string | null;
 
   @Column({ name: 'status_updated_at', type: 'timestamp', nullable: true })
   statusUpdatedAt!: Date | null;
